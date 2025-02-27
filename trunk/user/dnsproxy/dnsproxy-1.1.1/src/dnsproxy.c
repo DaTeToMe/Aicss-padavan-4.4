@@ -1,13 +1,3 @@
-/*
- * Copyright 2014, Vietor Liu <vietor.liu at gmail.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or any later version. For full terms that can be
- * found in the LICENSE file.
- */
-
 #include "dnsproxy.h"
 #include "asciilogo.h"
 
@@ -17,6 +7,7 @@
 
 #define PACKAGE_SIZE 8192
 #define CACHE_CLEAN_TIME (MIN_TTL / 2 + 1)
+#define TIMEOUT_SECONDS 3  // 新增：定义3秒超时时间
 
 #if defined(_MSC_VER)
 #pragma comment(lib,"ws2_32")
@@ -41,6 +32,7 @@ typedef struct {
 typedef struct {
 	LOCAL_DNS local;
 	REMOTE_DNS remote;
+	REMOTE_DNS local_dnsmasq;  // 新增：用于本地dnsmasq的REMOTE_DNS结构
 } PROXY_ENGINE;
 
 static const int enable = 1;
@@ -50,6 +42,7 @@ static void process_query(PROXY_ENGINE *engine)
 {
 	LOCAL_DNS *ldns;
 	REMOTE_DNS *rdns;
+	REMOTE_DNS *dnsmasq;  // 新增：指向本地dnsmasq的指针
 	DNS_HDR *hdr, *rhdr;
 	DNS_QDS *qds;
 	DNS_RRS *rrs;
@@ -67,6 +60,7 @@ static void process_query(PROXY_ENGINE *engine)
 
 	ldns = &engine->local;
 	rdns = &engine->remote;
+	dnsmasq = &engine->local_dnsmasq;  // 新增：初始化dnsmasq指针
 	buffer = ldns->buffer + sizeof(unsigned short);
 
 	addrlen = sizeof(struct sockaddr_in);
@@ -126,7 +120,7 @@ static void process_query(PROXY_ENGINE *engine)
 			memcpy(pos, dcache->answer, dcache->an_length);
 			rear = pos + dcache->an_length;
 			if(dcache->expire > 0) {
-				if(time(&current) <= dcache->timestamp)
+				if(time(¤t) <= dcache->timestamp)
 					ttl = 1;
 				else
 					ttl = (unsigned int)(current - dcache->timestamp);
@@ -169,10 +163,28 @@ static void process_query(PROXY_ENGINE *engine)
 		else {
 			hdr->id = htons(tcache->new_id);
 			if(!rdns->tcp) {
-				if(sendto(rdns->sock, buffer, size, 0, (struct sockaddr*)&rdns->addr, sizeof(struct sockaddr_in)) != size)
+				// 修改：发送到远程DNS并检测3秒超时
+				if(sendto(rdns->sock, buffer, size, 0, (struct sockaddr*)&rdns->addr, sizeof(struct sockaddr_in)) != size) {
 					rhdr->rcode = 2;
+				} else {
+					// 使用select检测远程DNS响应超时
+					fd_set readfds;
+					struct timeval timeout;
+					timeout.tv_sec = TIMEOUT_SECONDS;  // 设置3秒超时
+					timeout.tv_usec = 0;
+					FD_ZERO(&readfds);
+					FD_SET(rdns->sock, &readfds);
+					int ready = select((int)rdns->sock + 1, &readfds, NULL, NULL, &timeout);
+
+					if (ready <= 0) {  // 超时或出错，切换到dnsmasq
+						if (sendto(dnsmasq->sock, buffer, size, 0, (struct sockaddr*)&dnsmasq->addr, sizeof(struct sockaddr_in)) != size) {
+							rhdr->rcode = 2;  // dnsmasq发送失败
+						}
+					}
+				}
 			}
 			else {
+				// 修改：TCP模式下发送并检测3秒超时
 				if(rdns->sock == INVALID_SOCKET) {
 					rdns->head = 0;
 					rdns->rear = 0;
@@ -197,6 +209,22 @@ static void process_query(PROXY_ENGINE *engine)
 						closesocket(rdns->sock);
 						rdns->sock = INVALID_SOCKET;
 						rhdr->rcode = 2;
+					} else {
+						// 使用select检测TCP响应超时
+						fd_set readfds;
+						struct timeval timeout;
+						timeout.tv_sec = TIMEOUT_SECONDS;  // 设置3秒超时
+						timeout.tv_usec = 0;
+						FD的角度_ZERO(&readfds);
+						FD_SET(rdns->sock, &readfds);
+						int ready = select((int)rdns->sock + 1, &readfds, NULL, NULL, &timeout);
+
+						if (ready <= 0) {  // 超时或出错，切换到dnsmasq
+							// 注意：TCP发送的数据包含长度前缀，dnsmasq使用UDP时需去掉前缀
+							if (sendto(dnsmasq->sock, buffer, size - sizeof(unsigned short), 0, (struct sockaddr*)&dnsmasq->addr, sizeof(struct sockaddr_in)) != (size - sizeof(unsigned short))) {
+								rhdr->rcode = 2;  // dnsmasq发送失败
+							}
+						}
 					}
 				}
 			}
@@ -382,6 +410,7 @@ static int dnsproxy(unsigned short local_port, const char* remote_addr, unsigned
 	PROXY_ENGINE *engine = &g_engine;
 	LOCAL_DNS *ldns = &engine->local;
 	REMOTE_DNS *rdns = &engine->remote;
+	REMOTE_DNS *dnsmasq = &engine->local_dnsmasq;  // 新增：dnsmasq指针
 
 	ldns->sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if(ldns->sock == INVALID_SOCKET) {
@@ -420,7 +449,21 @@ static int dnsproxy(unsigned short local_port, const char* remote_addr, unsigned
 #endif
 	}
 
-	last_clean = time(&current);
+	// 新增：初始化dnsmasq的socket和地址，适配Padavan默认dnsmasq配置
+	dnsmasq->tcp = 0;  // dnsmasq使用UDP
+	dnsmasq->sock = socket(AF_INET, SOCK_DGRAM, 0);
+	if (dnsmasq->sock == INVALID_SOCKET) {
+		perror("create dnsmasq socket");
+		return -1;
+	}
+	dnsmasq->addr.sin_family = AF_INET;
+	dnsmasq->addr.sin_addr.s_addr = inet_addr("127.0.0.1");  // Padavan默认dnsmasq地址
+	dnsmasq->addr.sin_port = htons(53);  // Padavan默认dnsmasq端口
+	dnsmasq->head = 0;
+	dnsmasq->rear = 0;
+	dnsmasq->capacity = sizeof(dnsmasq->buffer);
+
+	last_clean = time(¤t);
 	while(1) {
 		FD_ZERO(&readfds);
 		FD_SET(ldns->sock, &readfds);
@@ -429,6 +472,12 @@ static int dnsproxy(unsigned short local_port, const char* remote_addr, unsigned
 			FD_SET(rdns->sock, &readfds);
 			if(maxfd < (int)rdns->sock)
 				maxfd = (int)rdns->sock;
+		}
+		// 新增：将dnsmasq的socket加入select监听
+		if(dnsmasq->sock != INVALID_SOCKET) {
+			FD_SET(dnsmasq->sock, &readfds);
+			if(maxfd < (int)dnsmasq->sock)
+				maxfd = (int)dnsmasq->sock;
 		}
 		timeout.tv_sec = CACHE_CLEAN_TIME;
 		timeout.tv_usec = 0;
@@ -441,10 +490,14 @@ static int dnsproxy(unsigned short local_port, const char* remote_addr, unsigned
 				else
 					process_response_udp(rdns);
 			}
+			// 新增：处理dnsmasq的响应
+			if(dnsmasq->sock != INVALID_SOCKET && FD_ISSET(dnsmasq->sock, &readfds)) {
+				process_response_udp(dnsmasq);  // 使用相同的UDP处理逻辑
+			}
 			if(FD_ISSET(ldns->sock, &readfds))
 				process_query(engine);
 		}
-		if(time(&current) - last_clean > CACHE_CLEAN_TIME || fds == 0) {
+		if(time(¤t) - last_clean > CACHE_CLEAN_TIME || fds == 0) {
 			last_clean = current;
 			domain_cache_clean(current);
 			transport_cache_clean(current);
