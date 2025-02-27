@@ -6,6 +6,8 @@ fdrive.cloud
 assrt.net
 v.im
 x.com
+x.ai
+grok.com
 filefactory.com
 tiktok.com
 tiktokcdn.com
