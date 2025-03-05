@@ -1,10 +1,10 @@
-#ifndef ERROR_H
-#define ERROR_H
+#ifndef ATOMIC_SWAP_H
+#define ATOMIC_SWAP_H
+
 /*
- * Create a squashfs filesystem.  This is a highly compressed read only
- * filesystem.
+ * Squashfs
  *
- * Copyright (c) 2012, 2013, 2014, 2019, 2021
+ * Copyright (c) 2024
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -21,25 +21,30 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *
- * error.h
+ * atomic_swap.h
  */
 
-extern void progressbar_error(char *fmt, ...)
-	__attribute__ ((format (printf, 1, 2)));
-extern void progressbar_info(char *fmt, ...)
-	__attribute__ ((format (printf, 1, 2)));
+#ifdef DONT_USE_ATOMIC_EXCHANGE_N
+static inline struct read_entry *atomic_swap(struct read_entry **entry,
+					pthread_mutex_t *mutex)
+{
+	struct read_entry *value;
 
-#ifdef SQUASHFS_TRACE
-#define TRACE(s, args...) \
-		do { \
-			progressbar_info("squashfs: "s, ## args);\
-		} while(0)
+	pthread_cleanup_push((void *) pthread_mutex_unlock, mutex);
+	pthread_mutex_lock(mutex);
+
+	value = *entry;
+	*entry = NULL;
+
+	pthread_cleanup_pop(1);
+
+	return value;
+}
 #else
-#define TRACE(s, args...)
+static inline struct read_entry *atomic_swap(struct read_entry **entry,
+					pthread_mutex_t *mutex)
+{
+	return __atomic_exchange_n(entry, NULL, __ATOMIC_SEQ_CST);
+}
 #endif
-
-#define ERROR(s, args...) \
-		do {\
-			progressbar_error(s, ## args); \
-		} while(0)
 #endif

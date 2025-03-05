@@ -1,10 +1,7 @@
-#ifndef ERROR_H
-#define ERROR_H
 /*
- * Create a squashfs filesystem.  This is a highly compressed read only
- * filesystem.
+ * Squashfs
  *
- * Copyright (c) 2012, 2013, 2014, 2019, 2021
+ * Copyright (c) 2025
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -21,25 +18,38 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *
- * error.h
+ * limit.c
  */
 
-extern void progressbar_error(char *fmt, ...)
-	__attribute__ ((format (printf, 1, 2)));
-extern void progressbar_info(char *fmt, ...)
-	__attribute__ ((format (printf, 1, 2)));
+#include <sys/resource.h>
 
-#ifdef SQUASHFS_TRACE
-#define TRACE(s, args...) \
-		do { \
-			progressbar_info("squashfs: "s, ## args);\
-		} while(0)
-#else
-#define TRACE(s, args...)
-#endif
+#include "error.h"
+#include "limit.h"
 
-#define ERROR(s, args...) \
-		do {\
-			progressbar_error(s, ## args); \
-		} while(0)
-#endif
+int file_limit()
+{
+	static int max_files = -2;
+	struct rlimit rlim;
+	int res;
+
+	if(max_files == -2) {
+		res = getrlimit(RLIMIT_NOFILE, &rlim);
+		if (res == -1) {
+			ERROR("failed to get open file limit!  Defaulting to 1\n");
+			max_files = 1;
+		} else if (rlim.rlim_cur != RLIM_INFINITY) {
+			/*
+			 * leave OPEN_FILE_MARGIN free (rlim_cur includes fds used by
+			 * stdin, stdout, stderr and filesystem fd
+			 */
+			if (rlim.rlim_cur <= OPEN_FILE_MARGIN)
+				/* no margin, use minimum possible */
+				max_files = 1;
+			else
+				max_files = rlim.rlim_cur - OPEN_FILE_MARGIN;
+		} else
+			max_files = -1;
+	}
+
+	return max_files;
+}

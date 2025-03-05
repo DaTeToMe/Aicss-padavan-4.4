@@ -37,6 +37,7 @@
 #include "memory.h"
 #include "print_pager.h"
 #include "unsquashfs_help.h"
+#include "limit.h"
 
 #ifdef __linux__
 #include <sys/sysmacros.h>
@@ -44,7 +45,6 @@
 
 #include <sys/types.h>
 #include <sys/time.h>
-#include <sys/resource.h>
 #include <limits.h>
 #include <ctype.h>
 
@@ -969,7 +969,6 @@ failure:
 static pthread_mutex_t open_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t open_empty = PTHREAD_COND_INITIALIZER;
 static int open_unlimited, open_count;
-#define OPEN_FILE_MARGIN 10
 
 
 static void open_init(int count)
@@ -2767,8 +2766,7 @@ static void *progress_thread(void *arg)
 
 static void initialise_threads(int fragment_buffer_size, int data_buffer_size, int cat_file)
 {
-	struct rlimit rlim;
-	int i, max_files, res;
+	int i, max_files;
 	sigset_t sigmask, old_mask;
 
 	if(cat_file == FALSE) {
@@ -2854,26 +2852,9 @@ static void initialise_threads(int fragment_buffer_size, int data_buffer_size, i
 	 * is data block cache size + one fragment per open file, and then
 	 * we will have a file_entry for each open file.
 	 */
-	res = getrlimit(RLIMIT_NOFILE, &rlim);
-	if (res == -1) {
-		ERROR("failed to get open file limit!  Defaulting to 1\n");
-		rlim.rlim_cur = 1;
-	}
-
-	if (rlim.rlim_cur != RLIM_INFINITY) {
-		/*
-		 * leave OPEN_FILE_MARGIN free (rlim_cur includes fds used by
-		 * stdin, stdout, stderr and filesystem fd
-		 */
-		if (rlim.rlim_cur <= OPEN_FILE_MARGIN)
-			/* no margin, use minimum possible */
-			max_files = 1;
-		else
-			max_files = rlim.rlim_cur - OPEN_FILE_MARGIN;
-	} else
-		max_files = -1;
 
 	/* set amount of available files for use by open_wait and close_wake */
+	max_files = file_limit();
 	open_init(max_files);
 
 	/*
@@ -3908,6 +3889,66 @@ static void check_pager()
 }
 
 
+static void check_sqfs_cmdline(int argc, char *argv[])
+{
+	char *dirname = getenv("SQFS_CMDLINE"), *filename, *arg;
+	int file, i, res;
+	struct stat buf;
+
+	if(dirname != NULL) {
+		res = asprintf(&filename, "%s/%s", dirname, "sqfs_cmdline");
+		if(res == -1)
+			BAD_ERROR("asprintf failed in check_sqfs_cmdline\n");
+
+		file = open(filename, O_CREAT | O_APPEND | O_NOFOLLOW | O_WRONLY,
+					S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+
+		if(file == -1) {
+			if(errno == ELOOP)
+				BAD_ERROR("Failed to append to SQFS_CMDLINE "
+					"filename \"%s\" because it is a symbolic "
+					"link or too many symbolic links were "
+					"encountered\n", filename);
+			else
+				BAD_ERROR("Failed to append to SQFS_CMDLINE filename "
+					"\"%s\" because %s\n", filename,
+					strerror(errno));
+		}
+
+		res = fstat(file, &buf);
+		if(res == -1)
+			BAD_ERROR("Failed to fstat SQFS_CMDLINE filename "
+				"\"%s\" because %s\n", filename, strerror(errno));
+
+		if(buf.st_nlink > 1)
+			BAD_ERROR("SQFS_CMDLINE filename \"%s\" is a hard "
+				"link, refusing to append to it\n", filename);
+
+		if(buf.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))
+			BAD_ERROR("SQFS_CMDLINE filename \"%s\" has execute "
+				"permissions, refusing to append to it\n", filename);
+
+		for(i = 0;  i < argc; i++) {
+			res = asprintf(&arg, "\"%s\" ", argv[i]);
+			if(res == -1)
+				BAD_ERROR("asprintf failed in "
+					"check_sqfs_cmdline\n");
+
+			res = write_bytes(file, arg, strlen(arg));
+			if(res == -1)
+				BAD_ERROR("write failed in check_sqfs_cmdline\n");
+
+			free(arg);
+		}
+
+		res = write_bytes(file, "\n", 1);
+		if(res == -1)
+			BAD_ERROR("write failed in check_sqfs_cmdline\n");
+
+		close(file);
+		free(filename);
+	}
+}
 static void print_version(char *string)
 {
 	printf("%s version " VERSION " (" DATE ")\n", string);
@@ -4023,7 +4064,7 @@ static int parse_cat_options(int argc, char *argv[])
 					!parse_number_percent(argv[i], &percent) ||
 					(percent < 1)) {
 				ERROR("%s: -mem-percent missing or invalid "
-					"percentage: it should be 1 - 75%\n",
+					"percentage: it should be 1 - 75%%\n",
 					 argv[0]);
 				sqfscat_option_help(argv[i - 1]);
 			}
@@ -4324,7 +4365,7 @@ static int parse_options(int argc, char *argv[])
 					!parse_number_percent(argv[i], &percent) ||
 					(percent < 1)) {
 				ERROR("unsquashfs: -mem-percent missing or invalid "
-					"percentage: it should be 1 - 75%\n");
+					"percentage: it should be 1 - 75%%\n");
 				unsquashfs_option_help("-mem-percent");
 			}
 
@@ -4514,6 +4555,7 @@ int main(int argc, char *argv[])
 	int exit_code = 0;
 	char *command;
 
+	check_sqfs_cmdline(argc, argv);
 	check_pager();
 
 	pthread_mutex_init(&screen_mutex, NULL);

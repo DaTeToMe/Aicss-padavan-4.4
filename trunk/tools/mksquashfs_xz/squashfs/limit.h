@@ -1,10 +1,9 @@
-#ifndef ERROR_H
-#define ERROR_H
+#ifndef LIMIT_H
+#define LIMIT_H
 /*
- * Create a squashfs filesystem.  This is a highly compressed read only
- * filesystem.
+ * Squashfs
  *
- * Copyright (c) 2012, 2013, 2014, 2019, 2021
+ * Copyright (c) 2025
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -21,25 +20,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  *
- * error.h
+ * limit.h
  */
 
-extern void progressbar_error(char *fmt, ...)
-	__attribute__ ((format (printf, 1, 2)));
-extern void progressbar_info(char *fmt, ...)
-	__attribute__ ((format (printf, 1, 2)));
-
-#ifdef SQUASHFS_TRACE
-#define TRACE(s, args...) \
-		do { \
-			progressbar_info("squashfs: "s, ## args);\
-		} while(0)
-#else
-#define TRACE(s, args...)
-#endif
-
-#define ERROR(s, args...) \
-		do {\
-			progressbar_error(s, ## args); \
-		} while(0)
+#define OPEN_FILE_MARGIN 10
+extern int file_limit();
 #endif
