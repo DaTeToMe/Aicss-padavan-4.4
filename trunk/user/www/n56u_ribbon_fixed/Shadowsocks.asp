@@ -27,6 +27,7 @@
 	<style>
 		body {
 			overflow-y: auto !important; /* 强制页面可滚动 */
+			overflow-y: scroll; /* 兼容老版本浏览器，确保滚动条在所有浏览器中生效 */
 		}
 		#wnd_ss_add {
 			overflow-y: auto; /* 确保表格容器可滚动 */
@@ -37,15 +38,20 @@
 		}
 	</style>
 	<script>
-		var node_global_max = 0;
+		// 定义全局变量
+		const $j = jQuery.noConflict(); // 使用 const 定义 jQuery，避免重复赋值
+		let node_global_max = 0; // 只定义一次，避免重复
+		let editing_ss_id = 0;
+		let timer = null; // 用于优化 ctime 和 dtime 的计时器
+
 		<% shadowsocks_status(); %>
 		<% dns2tcp_status(); %>
 		<% dnsproxy_status(); %>
 		<% rules_count(); %>
-		node_global_max = 0;
-		editing_ss_id = 0;
-		var $j = jQuery.noConflict();
+
+		// 优化页面初始化，使用事件委托减少事件绑定
 		$j(document).ready(function () {
+			// 初始化开关控件
 			init_itoggle('ss_enable');
 			init_itoggle('switch_enable_x_0');
 			init_itoggle('ss_chdns');
@@ -58,12 +64,13 @@
 			init_itoggle('ss_adblock_url');
 			init_itoggle('socks5_enable');
 			init_itoggle('ss_schedule_enable', change_on);
-			$j("#tab_ss_cfg, #tab_ss_add, #tab_ss_dlink, #tab_ss_ssl, #tab_ss_cli, #tab_ss_log, #tab_ss_help").click(
-				function () {
-					var newHash = $j(this).attr('href').toLowerCase();
-					showTab(newHash);
-					return true;
-				});
+
+			$j(document).on('click', '[id^="tab_ss_"]', function () {
+				var newHash = $j(this).attr('href').toLowerCase();
+				showTab(newHash);
+				return true; // 统一返回 true，确保事件处理一致性
+			});
+
 			$j("#close_add").click(function () {
 				$j("#vpnc_settings").fadeOut(200);
 				return true; 
@@ -116,33 +123,57 @@
 				}
 			});
 		});
-		function ClearssrplusLog(){
-			var $j = jQuery.noConflict();
-			$j.post('/apply.cgi',
-			{
+
+		function ClearssrplusLog() {
+			$j.post('/apply.cgi', {
 				'action_mode': ' ClearssrplusLog ',
 			});
 		}
+
 		function ctime() {
-			var t=0;
-			c=null;
-			document.getElementById('btn_ctime').value='正在运行脚本:0s';
-			document.getElementById('btn_ctime').style.display="inline";
-			c=setInterval(function(){
-				t=t+1
-				//document.getElementById("ctime").value=t + "秒";
-				document.getElementById('btn_ctime').value='正在运行脚本:' + t +"s";
-			},1000);
+			const btn = document.getElementById('btn_ctime'); // 缓存 DOM 元素
+			let t = 0;
+			btn.value = '正在运行脚本:0s';
+			btn.style.display = 'inline';
+			timer = setInterval(() => {
+				btn.value = `正在运行脚本:${++t}s`; // 使用模板字符串，减少字符串拼接
+			}, 1000);
 		}
+
 		function dtime() {
-			clearInterval(c);
-			document.getElementById('btn_ctime').value='脚本运行完成!';
-			setTimeout('document.getElementById("btn_ctime").style.display="none";',1000);
+			clearInterval(timer); // 使用全局 timer 变量
+			const btn = document.getElementById('btn_ctime');
+			btn.value = '脚本运行完成!';
+			setTimeout(() => btn.style.display = 'none', 1000);
 		}
+
 		function ensureScroll() {
 			document.body.style.overflow = "auto";
 			window.dispatchEvent(new Event('resize')); // 强制触发窗口调整
 		}
+
+		function fill_ss_status(status_code) {
+			const ssStatus = document.getElementById('ss_status'); // 缓存 DOM 元素
+			const stext = status_code === 0 ? "<#Stopped#>" : status_code === 1 ? "<#Running#>" : "Unknown"; // 三元运算简化逻辑
+			ssStatus.innerHTML = `<span class="label label-${status_code !== 0 ? 'success' : 'warning'}">${stext}</span>`; // 使用模板字符串
+			// 保留原始 iframe 操作，未优化
+			$("domestic_ip").innerHTML = '<iframe src="http://ip.3322.net" height="30" scrolling="no" frameborder="0" marginheight="0" marginwidth="0"></iframe>';
+			$("foreign_ip").innerHTML = '<iframe src="https://ifconfig.me/ip" height="30" scrolling="no" frameborder="0" marginheight="0" marginwidth="0"></iframe>';
+			$("gg_status").innerHTML = '<span><img alt="无法访问" src="https://www.google.com/favicon.ico?' + new Date().getTime() + '" /></span>';
+		}
+
+		function fill_dns2tcp_status(status_code) {
+			const dns2tcpStatus = document.getElementById('dns2tcp_status'); // 缓存 DOM 元素
+			const stext = status_code === 0 ? "<#Stopped#>" : status_code === 1 ? "<#Running#>" : "Unknown";
+			dns2tcpStatus.innerHTML = `<span class="label label-${status_code !== 0 ? 'success' : 'warning'}">${stext}</span>`;
+		}
+
+		function fill_dnsproxy_status(status_code) {
+			const dnsproxyStatus = document.getElementById('dnsproxy_status'); // 缓存 DOM 元素
+			const stext = status_code === 0 ? "<#Stopped#>" : status_code === 1 ? "<#Running#>" : "Unknown";
+			dnsproxyStatus.innerHTML = `<span class="label label-${status_code !== 0 ? 'success' : 'warning'}">${stext}</span>`;
+		}
+
 		function initial() {
 			show_banner(2);
 			show_menu(13, 13, 0);
@@ -151,10 +182,6 @@
 			fill_dns2tcp_status(dns2tcp_status());
 			fill_dnsproxy_status(dnsproxy_status());
 			var wan0_dns = '<% nvram_get_x("","wan0_dns"); %>';
-			// use local DNS
-			//if (wan0_dns.length > 0){
-			//		$j("select[name='china_dns']").prepend($j('<option value="'+wan0_dns+'" selected>本地DNS ' + wan0_dns + '</option>'));
-			//}
 			$("chnroute_count").innerHTML = '<#menu5_17_3#>' + chnroute_count();
 			$("gfwlist_count").innerHTML = '<#menu5_17_3#>' + gfwlist_count();
 			switch_ss_type();
@@ -163,16 +190,8 @@
 			switch_dns();
 			var o2 = document.form.lan_con;
 			var o3 = document.form.ss_threads;
-			//var o4 = document.form.china_dns;
-			var o5 = document.form.pdnsd_enable;
-			//var o6 = document.form.socks5_enable;
-			//var o7 = document.form.tunnel_forward;
 			o2.value = '<% nvram_get_x("","lan_con"); %>';
 			o3.value = '<% nvram_get_x("","ss_threads"); %>';
-			//o4.value = '<% nvram_get_x("","china_dns"); %>';
-			o5.value = '<% nvram_get_x("","pdnsd_enable"); %>';
-			//o6.value = '<% nvram_get_x("","socks5_enable"); %>';
-			//o7.value = '<% nvram_get_x("","tunnel_forward"); %>';
 			switch_dns();
 			if (ss_schedule_support) {
 				document.form.ss_date_x_Sun.checked = getDateCheck(document.form.ss_schedule.value, 0);
@@ -192,10 +211,12 @@
 				document.getElementById('ss_schedule_time_tr').style.display = "none";
 			}
 		}
+
 		function textarea_scripts_enabled(v) {
 			//inputCtrl(document.form['scripts.ss.dom.sh'], v);
 			//inputCtrl(document.form['scripts.ss.ip.sh'], v);
 		}
+
 		function change_on() {
 			var v = document.form.ss_schedule_enable_x.value;
 			showhide_div('ss_schedule_date_tr', v);
@@ -203,6 +224,7 @@
 			if (v == 1)
 				check_Timefield_checkbox();
 		}
+
 		function validForm() {
 			if (ss_schedule_support) {
 				if (!document.form.ss_date_x_Sun.checked && !document.form.ss_date_x_Mon.checked &&
@@ -216,6 +238,7 @@
 			}
 			return true;
 		}
+
 		function switch_ss_type() {
 			showhide_div('row_quic_header', 0);
 			showhide_div('row_quic_key', 0);
@@ -277,7 +300,6 @@
 				showhide_div('row_ss_method', 1);
 			} else if (b == "trojan") {
 				showhide_div('row_ss_password', 1);
-				//showhide_div('row_v2_tls', 1);
 				showhide_div('row_tj_tls_host', 1);
 				showhide_div('row_ssp_insecure', 1);
 			} else if (b == "v2ray" || b == "xray") {
@@ -298,6 +320,7 @@
 				showhide_div('row_s5_password', 1);
 			}
 		}
+
 		function switch_v2_type() {
 			showhide_div('row_quic_header', 0);
 			showhide_div('row_quic_key', 0);
@@ -359,20 +382,18 @@
 				showhide_div('row_v2_splithttp_path', 1);
 			}
 		}
+
 		function switch_dns() {
 			var b = document.form.pdnsd_enable.value;
 			if (b == "0" || b == "1") { 
-				//showhide_div('row_china_dns', 1);
-				//showhide_div('row_tunnel_forward', 1);
 				showhide_div('row_ssp_dns_ip', 0);
 				showhide_div('row_ssp_dns_port', 0);
 			} else if (b == "2") {
-				//showhide_div('row_china_dns', 0);
-				//showhide_div('row_tunnel_forward', 0);
 				showhide_div('row_ssp_dns_ip', 0);
 				showhide_div('row_ssp_dns_port', 0);
 			}
 		}
+
 		function applyRule() {
 			if (validForm()) {
 				if (ss_schedule_support) {
@@ -388,6 +409,7 @@
 			document.form.next_page.value = "";
 			document.form.submit();
 		}
+
 		function submitInternet(v) {
 			showLoading();
 			$j.ajax({
@@ -405,39 +427,12 @@
 				}
 			});
 		}
+
 		function change_ss_watchcat_display() {
 			var v = document.form.ss_router_proxy[0].checked;
 			showhide_div('ss_wathcat_option', v);
 		}
-		function fill_ss_status(status_code) {
-			var stext = "Unknown";
-			if (status_code == 0)
-				stext = "<#Stopped#>";
-			else if (status_code == 1)
-				stext = "<#Running#>";
-			$("ss_status").innerHTML = '<span class="label label-' + (status_code != 0 ? 'success' : 'warning') + '">' + stext + '</span>';
-			$("domestic_ip").innerHTML = '<iframe src="http://ip.3322.net" height="30" scrolling="no" frameborder="0" marginheight="0" marginwidth="0"></iframe>';
-			$("foreign_ip").innerHTML = '<iframe src="https://ifconfig.me/ip" height="30" scrolling="no" frameborder="0" marginheight="0" marginwidth="0"></iframe>';
-			$("gg_status").innerHTML = '<span><img alt="无法访问" src="https://www.google.com/favicon.ico?' + new Date().getTime() + '" /></span>';
-		}
-		function fill_dns2tcp_status(status_code) {
-			var stext = "Unknown";
-			if (status_code == 0)
-				stext = "<#Stopped#>";
-			else if (status_code == 1)
-				stext = "<#Running#>";
-			$("dns2tcp_status").innerHTML = '<span class="label label-' + (status_code != 0 ? 'success' : 'warning') + '">' +
-				stext + '</span>';
-		}
-		function fill_dnsproxy_status(status_code) {
-			var stext = "Unknown";
-			if (status_code == 0)
-				stext = "<#Stopped#>";
-			else if (status_code == 1)
-				stext = "<#Running#>";
-			$("dnsproxy_status").innerHTML = '<span class="label label-' + (status_code != 0 ? 'success' : 'warning') + '">' +
-				stext + '</span>';
-		}
+
 		var arrHashes = ["cfg", "add", "ssl", "cli", "log", "help"];
 		function showTab(curHash) {
 			var obj = $('tab_ss_' + curHash.slice(1));
@@ -454,6 +449,7 @@
 			}
 			window.location.hash = curHash;
 		}
+
 		function getHash() {
 			var curHash = window.location.hash.toLowerCase();
 			for (var i = 0; i < arrHashes.length; i++) {
@@ -462,6 +458,7 @@
 			}
 			return ('#' + arrHashes[0]);
 		}
+
 		function markGroupRULES(o, c, b) {
 			document.form.group_id.value = "SspList";
 			if (b == " Add ") {
@@ -475,6 +472,7 @@
 			document.form.current_page.value = "Shadowsocks.asp#add";
 			return true;
 		}
+
 		function dlink() {
 			ctime();
 			var ns = {};
@@ -494,11 +492,12 @@
 						dtime();
 						$j('#table99').bootstrapTable('refresh');
 						document.getElementById('btn_update_link').value = '更新订阅';
-						ensureScroll(); // 确保滚动条可用
+						ensureScroll();
 					}, 1000);
 				}
 			});
 		}
+
 		function ddlink() {
 			ctime();
 			var ns = {};
@@ -519,14 +518,14 @@
 						dtime();
 						$j('#table99').bootstrapTable('refresh');
 						document.getElementById('btn_rest_link').value = '清空节点';
-						ensureScroll(); // 确保滚动条可用
+						ensureScroll();
 					}, 1000);
 				}
 			});
 		}
+
 		function showMRULESList() {
 			$j('#table99').bootstrapTable({
-				//data: myss,
 				striped: true,
 				pageNumber: 1,
 				pagination: true,
@@ -535,7 +534,7 @@
 				sortOrder: "desc",
 				sidePagination: 'client',
 				pageSize: 25,
-				pageList: [15, 25, 35, 50], // 分页显示记录数
+				pageList: [15, 25, 35, 50],
 				uniqueId: "ids",
 				ajax:function(request) {
 					$j.ajax({
@@ -545,23 +544,19 @@
 							request.success({
 								row : data
 							});
-							//显示节点下拉列表 by 花妆男
-							// 渲染父节点  obj 需要渲染的数据 keyStr key需要去除的字符串
 							var keyStr = "ssconf_basic_json_";
-							var nodeList = document.getElementById("nodeList"); // 获取TCP节点
-							var unodeList = document.getElementById("u_nodeList"); // 获取UDP节点
-							var s5nodeList = document.getElementById("s5_nodeList"); // 获取SOCK5节点
-							nodeList.options.length=1; // 清除TCP旧节点，准备获取新列表信息
-							unodeList.options.length=1;// 清除UDP旧节点，准备获取新列表信息
-							s5nodeList.options.length=1;// 清除SOCK5旧节点，准备获取新列表信息
-							for (var key in db_ss) { // 遍历对象
-								var optionObj = JSON.parse(db_ss[key]); // 字符串转为对象
-								//if(optionObj.ping != "failed"){   //过滤ping不通的节点
-								var text = '[ ' + (optionObj.type ? optionObj.type : "类型获取失败") + ' ] ' + (optionObj.alias ? optionObj.alias : "名字获取失败"); // 判断下怕获取失败 ，括号是运算的问题
-								// 添加 
-								nodeList.options.add(new Option(text, key.replace(keyStr, ''))); // 通过 replacce把不要的字符去掉
-								unodeList.options.add(new Option(text, key.replace(keyStr, ''))); // 通过 replacce把不要的字符去掉
-								s5nodeList.options.add(new Option(text, key.replace(keyStr, ''))); // 通过 replacce把不要的字符去掉
+							var nodeList = document.getElementById("nodeList");
+							var unodeList = document.getElementById("u_nodeList");
+							var s5nodeList = document.getElementById("s5_nodeList");
+							nodeList.options.length=1;
+							unodeList.options.length=1;
+							s5nodeList.options.length=1;
+							for (var key in db_ss) {
+								var optionObj = JSON.parse(db_ss[key]);
+								var text = '[ ' + (optionObj.type ? optionObj.type : "类型获取失败") + ' ] ' + (optionObj.alias ? optionObj.alias : "名字获取失败");
+								nodeList.options.add(new Option(text, key.replace(keyStr, '')));
+								unodeList.options.add(new Option(text, key.replace(keyStr, '')));
+								s5nodeList.options.add(new Option(text, key.replace(keyStr, '')));
 								$j('#nodeList>option').sort(function (a, b) {
 									var aText = $j(a).val() * 1;
 									var bText = $j(b).val() * 1;
@@ -570,7 +565,6 @@
 									return 0;
 								}).appendTo('#nodeList');
 								$j('#nodeList>option').eq(0).attr("selected", "selected");
-								//udp列表
 								$j('#u_nodeList>option').sort(function (a, b) {
 									var aText = $j(a).val() * 1;
 									var bText = $j(b).val() * 1;
@@ -579,7 +573,6 @@
 									return 0;
 								}).appendTo('#u_nodeList');
 								$j('#u_nodeList>option').eq(0).attr("selected", "selected");
-								//s5列表
 								$j('#s5_nodeList>option').sort(function (a, b) {
 									var aText = $j(a).val() * 1;
 									var bText = $j(b).val() * 1;
@@ -588,17 +581,13 @@
 									return 0;
 								}).appendTo('#s5_nodeList');
 								$j('#s5_nodeList>option').eq(0).attr("selected", "selected");
-								//$j('#nodeList').selectpicker('val', '<% nvram_get_x("","global_server"); %>'); //主服务器列表默认
-								//$j('#u_nodeList').selectpicker('val', '<% nvram_get_x("","udp_relay_server"); %>'); //UDP服务器列表默认
 								document.form.global_server.value = '<% nvram_get_x("","global_server"); %>';
 								document.form.udp_relay_server.value = '<% nvram_get_x("","udp_relay_server"); %>';
 								document.form.socks5_enable.value = '<% nvram_get_x("","socks5_enable"); %>';
-								//}
 							}
-							//订阅节点表格
 							var myss = new Array();
 							var i = 0;
-							for (var key in db_ss) { // 遍历对象
+							for (var key in db_ss) {
 								var dbss = JSON.parse(db_ss[key])
 								dbss.ids = key.replace("ssconf_basic_json_", '');
 								myss[i] = dbss;
@@ -677,6 +666,7 @@
 				}]
 			});
 		}
+
 		function cellStylesales(value, row, index) {
 			var ping = row.ping
 			if (typeof (ping) == "undefined") {
@@ -704,6 +694,7 @@
 				};
 			}
 		}
+
 		function actionFormatter2(value, row, index) {
 			var ping = row.ping
 			var result = "";
@@ -716,6 +707,7 @@
 			}
 			return result;
 		}
+
 		function actionFormatter(value, row, index) {
 			return [
 				'<a class="edit_ss" href="javascript:void(0)" title="编辑">编辑</a>',
@@ -723,34 +715,34 @@
 				'<a class="del_ss" href="javascript:void(0)" title="删除">删除</a>'
 			].join(' | ');
 		}
+
 		window.operateEvents = {
 			'click .edit_ss': function (e, value, row, index) {
 				editing_ss_id = row.ids;
 				document.getElementById("ss_setting_title").innerHTML = "编辑节点";
 				showSSEditor(row);
-				return true; // 添加此行
+				return true;
 			},
 			'click .copy_ss': function (e, value, row, index) {
 				editing_ss_id = 0;
 				document.getElementById("ss_setting_title").innerHTML = "复制节点";
 				showSSEditor(row);
-				return true; // 添加此行 
+				return true; 
 			},
 			'click .del_ss': function (e, value, row, index) {
 				if (confirm('确认删除' + row.alias + '吗？')) {
 					del(row.ids);
 				}
-				return true; // 添加此行
+				return true;
 			}
 		};
+
 		function initSSParams() {
-			//ss
 			document.getElementById('ssp_type').value = 'ss';
 			document.getElementById('ssp_name').value = '';
 			document.getElementById('ssp_server').value = '';
 			document.getElementById('ssp_prot').value = '';
 			document.getElementById("ss_password").value = '';
-			//ssr
 			document.getElementById("ss_method").value = 'rc4-md5';
 			document.getElementById("ss_plugin").value = '';
 			document.getElementById("ss_plugin_opts").value = '';
@@ -758,7 +750,6 @@
 			document.getElementById("ss_protocol_param").value = '';
 			document.getElementById("ss_obfs").value = 'plain';
 			document.getElementById("ss_obfs_param").value = '';
-			//v2
 			document.getElementById("ssp_insecure").value = 0;
 			document.getElementById("ssp_insecure").checked = false;
 			document.getElementById("v2_mux").value = 0;
@@ -772,9 +763,7 @@
 			document.getElementById("v2_flow").value = '0';
 			document.getElementById("v2_http_host").value = '';
 			document.getElementById("v2_http_path").value = '/';
-			//document.getElementById("v2_tls").checked = false;
 			document.getElementById("ssp_tls_host").value = '';
-			//"v2 tcp"
 			document.getElementById("v2_kcp_guise").value = 'none';
 			document.getElementById("v2_mtu").value = '';
 			document.getElementById("v2_tti").value = '';
@@ -782,30 +771,23 @@
 			document.getElementById("v2_downlink_capacity").value = '';
 			document.getElementById("v2_read_buffer_size").value = '';
 			document.getElementById("v2_write_buffer_size").value = '';
-			//v2 ws
 			document.getElementById("v2_ws_host").value = '';
 			document.getElementById("v2_ws_path").value = '';
-			//v2 grpc
 			document.getElementById("v2_grpc_path").value = '';
-			//v2 h2
 			document.getElementById("v2_h2_host").value = '';
 			document.getElementById("v2_h2_path").value = '';
-			//v2 quic
 			document.getElementById("v2_quic_key").value = '';
 			document.getElementById("v2_quic_guise").value = 'none';
 			document.getElementById("v2_quic_security").value = 'none';
-			//v2 httpupgrade
 			document.getElementById("v2_httpupgrade_host").value = '';
 			document.getElementById("v2_httpupgrade_path").value = '';
-			//v2 splithttp
 			document.getElementById("v2_splithttp_host").value = '';
 			document.getElementById("v2_splithttp_path").value = '';
-			//sock5
 			document.getElementById("s5_password").value = '';
 			document.getElementById("s5_username").value = '';
 			switch_ss_type();
 		}
-		//编辑节点
+
 		function showSSEditor(ss) {
 			function getProperty(obj, prop, defVal) {
 				return obj && obj.hasOwnProperty(prop) ? obj[prop] : defVal;
@@ -841,7 +823,6 @@
 				document.getElementById("v2_http_path").value = getProperty(ss, 'http_path', '');
 				document.getElementById("v2_tls").value = getProperty(ss, 'tls', '0');
 				document.getElementById("v2_flow").value = getProperty(ss, 'flow', '0');
-				//document.getElementById("v2_tls").checked =  document.getElementById("v2_tls").value != 0;
 				document.getElementById("ssp_tls_host").value = getProperty(ss, 'tls_host', '');
 				if (transport == "kcp") {
 					document.getElementById("v2_kcp_guise").value = getProperty(ss, 'kcp_guise', 'none');
@@ -874,7 +855,6 @@
 				document.getElementById("ssp_insecure").value = getProperty(ss, 'insecure', 0);
 				document.getElementById("ssp_insecure").checked = document.getElementById("ssp_insecure").value != 0;
 				document.getElementById("v2_tls").value = 1;
-				//document.getElementById("v2_tls").checked = document.getElementById("v2_tls") != 0;
 				document.getElementById("ssp_tls_host").value = getProperty(ss, 'tls_host', '');
 			} else if (type == "socks5") {
 				//
@@ -882,6 +862,7 @@
 			switch_ss_type();
 			$j("#vpnc_settings").fadeIn(200);
 		}
+
 		function del(id) {
 			ctime();
 			var p = "ssconf_basic";
@@ -899,10 +880,11 @@
 				success: function (response) {
 					dtime();
 					$j('#table99').bootstrapTable('refresh');
-					ensureScroll(); // 确保滚动条可用
+					ensureScroll();
 				}
 			});
 		}
+
 		function del_dlink() {
 			ctime();
 			var row = $j("#table99").bootstrapTable('getSelections');
@@ -911,7 +893,6 @@
 			for (var key in row) {
 				ns[p + "_json_" + row[key].ids] = "deleting";
 			}
-			//console.log(ns)
 			document.getElementById("btn_del_link").value = "正在删除节点";
 			$j.ajax({
 				url: "/applydb.cgi?userm1=del&p=ss",
@@ -927,11 +908,12 @@
 						dtime();
 						$j('#table99').bootstrapTable('refresh');
 						document.getElementById('btn_del_link').value = '删除节点';
-						ensureScroll(); // 确保滚动条可用
+						ensureScroll();
 					}, 1000);
 				}
 			});
 		}
+
 		function ping_dlink() {
 			ctime();
 			var row = $j("#table99").bootstrapTable('getSelections');
@@ -940,7 +922,6 @@
 			for (var key in row) {
 				ns[row[key].ids] = "ping";
 			}
-			//showLoading();
 			document.getElementById("btn_ping_link").value = "正在ping节点";
 			$j.ajax({
 				url: "/applydb.cgi?useping=1&p=ss",
@@ -956,11 +937,12 @@
 						dtime();
 						$j('#table99').bootstrapTable('refresh');
 						document.getElementById('btn_ping_link').value = 'ping节点';
-						ensureScroll(); // 确保滚动条可用
+						ensureScroll();
 					}, 2000);
 				}
 			});
 		}
+
 		function aping_dlink() {
 			ctime();
 			var ns = {};
@@ -980,18 +962,19 @@
 						dtime();
 						$j('#table99').bootstrapTable('refresh');
 						document.getElementById('btn_aping_link').value = 'ping全部';
-						ensureScroll(); // 确保滚动条可用
+						ensureScroll();
 					}, 2000);
 				}
 			});
 		}
+
 		function paramsMatter(value, row, index) {
 			var span = document.createElement("span");
 			span.setAttribute("title", value);
 			span.innerHTML = value;
 			return span.outerHTML;
 		}
-		//td宽度以及内容超过宽度隐藏
+
 		function formatTableUnit(value, row, index) {
 			return {
 				css: {
@@ -1002,23 +985,29 @@
 				}
 			}
 		}
+
 		//-----------导入链接开始
 		function padright(str, cnt, pad) {
 			return str + Array(cnt + 1).join(pad);
 		}
+
 		function b64EncodeUnicode(str) {
 			return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function (match, p1) {
 				return String.fromCharCode('0x' + p1);
 			}));
 		}
+
 		function b64encutf8safe(str) {
 			return b64EncodeUnicode(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, '');
 		}
+
 		function b64DecodeUnicode(str) {
-			return decodeURIComponent(Array.prototype.map.call(atob(str), function (c) {
-				return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-			}).join(''));
+			// 使用现代语法并确保兼容性，老版本浏览器需 polyfill
+			return decodeURIComponent(
+				[...atob(str)].map(c => `%${c.charCodeAt(0).toString(16).padStart(2, '0')}`).join('')
+			);
 		}
+
 		function b64decutf8safe(str) {
 			var l;
 			str = str.replace(/-/g, "+").replace(/_/g, "/");
@@ -1028,9 +1017,11 @@
 				str = padright(str, l, "=");
 			return b64DecodeUnicode(str);
 		}
+
 		function b64encsafe(str) {
-			return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, '')
+			return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, '');
 		}
+
 		function b64decsafe(str) {
 			var l;
 			str = str.replace(/-/g, "+").replace(/_/g, "/");
@@ -1040,12 +1031,19 @@
 				str = padright(str, l, "=");
 			return atob(str);
 		}
+
+		function passwordShowHide(id) {
+   		 const input = document.getElementById(id);
+  		  input.type = input.type === 'password' ? 'text' : 'password';
+		}
+
 		function dictvalue(d, key) {
 			var v = d[key];
 			if (typeof (v) == 'undefined' || v == '')
 				return '';
 			return b64decsafe(v);
 		}
+
 		function import_ssr_url(btn, urlname, sid) {
 			var s = document.getElementById(urlname + '-status');
 			if (!s) return;
@@ -1218,7 +1216,7 @@
 			}
 		}
 		//-----------导入链接结束
-		//保存节点
+
 		function add_ss() {
 			var p = "ssconf_basic";
 			var ns = {};
@@ -1305,7 +1303,7 @@
 				}
 			});
 		}
-		//节点列表
+
 		function showsdlinkList() {
 			var key = "ssconf_basic_json_";
 			var nodeList = document.getElementById("nodeList");
@@ -1324,7 +1322,7 @@
 				success: function (response) {}
 			});
 		}
-		//UDP节点列表
+
 		function showsudlinkList() {
 			var key = "ssconf_basic_json_";
 			var nodeList = document.getElementById("u_nodeList");
@@ -1343,7 +1341,7 @@
 				success: function (response) {}
 			});
 		}
-		//SOCKS5节点列表
+
 		function shows5dlinkList() {
 			var key = "ssconf_basic_json_";
 			var nodeList = document.getElementById("s5_nodeList");
@@ -1424,7 +1422,7 @@
 													<input type="radio" value="1" name="ss_enable" id="ss_enable_1" <% nvram_match_x("", "ss_enable", "1", "checked"); %>><#checkbox_Yes#>
 													<input type="radio" value="0" name="ss_enable" id="ss_enable_0" <% nvram_match_x("", "ss_enable", "0", "checked"); %>><#checkbox_No#>
 												</div>
-											</td>
+																						</td>
 										</tr>
 										<tr>
 											<th width="50%"><#menu5_16_8#></th>
@@ -1511,16 +1509,6 @@
 												</select>
 											</td>
 										</tr>
-										<!--
-										<tr id="row_ssp_dns_ip" style="display:none;">
-											<th width="50%">SmartDNS加载方式:</th>
-											<td>
-												<select name="ssp_dns_ip" class="input" style="width: 200px">
-													<input type="radio" value="2" name="ssp_dns_ip" id="ssp_dns_ip_2" <% nvram_match_x("", "ssp_dns_ip", "2", "checked"); %>>自动配置
-													<input type="radio" value="1" name="ssp_dns_ip" id="ssp_dns_ip_1" <% nvram_match_x("", "ssp_dns_ip", "1", "checked"); %>>手动配置
-												</select>
-											</td>
-										</tr>-->
 									</table>
 									<table class="table">
 										<tr>
@@ -1707,7 +1695,6 @@
 													<input type="text" class="input" size="15" name="ss_plugin_opts" id="ss_plugin_opts" style="width: 200px" value="" />
 												</td>
 											</tr>
-											<!--SS参数结束--SSR参数开始-->
 											<tr id="row_ss_protocol_para" style="display:none;">
 												<th width="50%">传输协议参数：（可选）</th>
 												<td>
@@ -1732,7 +1719,6 @@
 													<input type="text" class="input" size="15" name="ss_obfs_param" id="ss_obfs_param" style="width: 200px" value="" />
 												</td>
 											</tr>
-											<!--SSR参数结束-->
 											<tr id="row_s5_enable" style="display:none;">
 												<th width="50%">启用用户名/密码认证：</th>
 												<td>
@@ -1752,7 +1738,6 @@
 													<button style="margin-left: -5px;" class="btn" type="button" onclick="passwordShowHide('s5_password')"><i class="icon-eye-close"></i></button>
 												</td>
 											</tr>
-											<!--V2RAY-->
 											<tr id="row_v2_aid" style="display:none;">
 												<th width="50%">AlterId(Level)</th>
 												<td>
@@ -1978,21 +1963,6 @@
 													<input type="checkbox" name="v2_mux" id="v2_mux">
 												</td>
 											</tr>
-											<!--
-											<tr>
-												<th width="50%">自动切换类型：</th>
-												<td>
-													<div class="main_itoggle">
-													<div id="switch_enable_x_0_on_of">
-														<input type="checkbox" id="switch_enable_x_0_fake" <% nvram_match_x("", "switch_enable_x_0", "1", "value=1 checked"); %><% nvram_match_x("", "switch_enable_x_0", "0", "value=0"); %>>
-													</div>
-													</div>
-													<div style="position: absolute; margin-left: -10000px;">
-														<input type="radio" value="1" name="switch_enable_x_0" id="switch_enable_x_0_1" <% nvram_match_x("", "switch_enable_x_0", "1", "checked"); %>><#checkbox_Yes#>
-														<input type="radio" value="0" name="switch_enable_x_0" id="switch_enable_x_0_0" <% nvram_match_x("", "switch_enable_x_0", "0", "checked"); %>><#checkbox_No#>
-													</div>
-												</td>
-											</tr>-->
 											<tr>
 												<td>
 													<center><input name="ManualRULESList2" id="ManualRULESList2" type="button" class="btn btn-primary" onclick="add_ss();" style="width: 219px" value="保存节点" /></center>
@@ -2105,7 +2075,7 @@
 											</td>
 										</tr>
 										<tr>
-											<th width="50%"><#Chnroute#>&nbsp;&nbsp;&nbsp;&nbsp;<span class="label label-info" style="padding: 5px 5px 5px 5px;" id="chnroute_count"></span></th>
+											<th width="50%"><#Chnroute#>    <span class="label label-info" style="padding: 5px 5px 5px 5px;" id="chnroute_count"></span></th>
 											<td style="border-top: 0 none;" colspan="2">
 												<input type="button" id="btn_connect_3" class="btn btn-info" value="<#menu5_17_2#>" onclick="submitInternet('Update_chnroute');">
 											</td>
@@ -2131,7 +2101,7 @@
 											</td>
 										</tr>
 										<tr>
-											<th width="50%"><#Gfwlist#>&nbsp;&nbsp;&nbsp;&nbsp;<span class="label label-info" style="padding: 5px 5px 5px 5px;" id="gfwlist_count"></span></th>
+											<th width="50%"><#Gfwlist#>    <span class="label label-info" style="padding: 5px 5px 5px 5px;" id="gfwlist_count"></span></th>
 											<td style="border-top: 0 none;" colspan="2">
 												<input type="button" id="btn_connect_4" class="btn btn-info" value="<#menu5_17_2#>" onclick="submitInternet('Update_gfwlist');">
 											</td>
