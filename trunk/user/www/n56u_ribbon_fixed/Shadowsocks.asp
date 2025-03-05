@@ -1032,11 +1032,6 @@
 			return atob(str);
 		}
 
-		function passwordShowHide(id) {
-   		 const input = document.getElementById(id);
-  		  input.type = input.type === 'password' ? 'text' : 'password';
-		}
-
 		function dictvalue(d, key) {
 			var v = d[key];
 			if (typeof (v) == 'undefined' || v == '')
@@ -2200,9 +2195,6 @@
 								</div>
 								<div id="wnd_ss_help" style="display:none">
 									<table width="100%" cellpadding="4" cellspacing="0" class="table">
-										<tr>
-											<th colspan="2" style="background-color: #E3E3E3;">进程资源限制说明: 此功能底层使用 <a href="https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v1/cgroups.html">cgroups</a></th>
-										</tr>
 										<tr>
 											<th width="100%">进程资源限制是为了防止进程占用过多资源导致路由器卡顿或重启,如果你的路由器配置足够,可以适当调高限制值。</th>
 										</tr>
