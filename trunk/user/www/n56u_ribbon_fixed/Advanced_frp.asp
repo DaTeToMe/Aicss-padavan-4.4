@@ -125,11 +125,11 @@ function done_validating(action){
 				<div class="row-fluid">
 					<div class="span12">
 						<div class="box well grad_colour_dark_blue">
-							<h2 class="box_head round_top">Frp - 内网穿透</h2>
+							<h2 class="box_head round_top">内网穿透</h2>
 							<div class="round_bottom">
 								<div class="row-fluid">
 									<div id="tabMenu" class="submenuBlock"></div>
-									<div class="alert alert-info" style="margin: 10px;">frp 是一个可用于内网穿透的高性能的反向代理应用，支持 tcp, udp 协议，为 http 和 https 应用协议提供了额外的能力，且尝试性支持了点对点穿透。
+									<div class="alert alert-info" style="margin: 10px;">Frp 是一个内网穿透反向代理应用，支持 tcp, udp 协议，为 http 和 https 应用协议提供了额外的能力。
 									</div>
 
 									<table width="100%" align="center" cellpadding="4" cellspacing="0" class="table">
