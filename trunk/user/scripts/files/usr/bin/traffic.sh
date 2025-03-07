@@ -135,7 +135,7 @@ get_device_type() {
     esac
 }
 
-# 设备判断: 修改后的 get_hostname 函数
+# 设备判断: 修改后的 get_hostname 函数，只保留主机名第一部分
 get_hostname() {
     local ip="$1"
     # 从 leases 文件中查找对应 IP 的记录
@@ -143,8 +143,8 @@ get_hostname() {
     local hostname=$(echo "$line" | $AWK '{print $4}' 2>/dev/null)
     local mac=$(echo "$line" | $AWK '{print $2}' 2>/dev/null)
     
-    # 清理主机名，去除换行符和特殊字符
-    hostname=$(echo "$hostname" | tr -d '\n\r' | sed 's/[^a-zA-Z0-9._-]//g')
+    # 清理主机名，只取第一行并去除换行符和特殊字符
+    hostname=$(echo "$hostname" | head -n 1 | tr -d '\n\r' | sed 's/[^a-zA-Z0-9._-]//g')
     
     # 如果主机名无效或为空，尝试使用设备类型
     if [ -z "$hostname" ] || [ "$hostname" = "Unknown" ] || [ "$hostname" = "*" ] || \
