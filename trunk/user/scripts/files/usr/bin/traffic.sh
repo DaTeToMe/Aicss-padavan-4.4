@@ -135,27 +135,29 @@ get_device_type() {
     esac
 }
 
-# 设备判断:
+# 设备判断: 修改后的 get_hostname 函数
 get_hostname() {
-   local ip="$1"
-   local line=$($GREP "$ip" /tmp/dnsmasq.leases 2>/dev/null)
-   local hostname=$(echo "$line" | $AWK '{print $4}' 2>/dev/null)
-   local mac=$(echo "$line" | $AWK '{print $2}' 2>/dev/null)
-   
-   # 如果主机名为空或无效,使用设备类型
-   if [ -z "$hostname" ] || [ "$hostname" = "Unknown" ] || [ "$hostname" = "*" ] || \
-      [ "$hostname" = "wlan0" ] || echo "$hostname" | $GREP -q "^[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]" 2>/dev/null; then
-       
-       if [ ! -z "$mac" ]; then
-           # 使用新的设备类型判断函数
-           get_device_type "$mac"
-       else
-           echo "未知设备"
-       fi
-   else
-       # 如果主机名有效，直接返回主机名
-       echo "$hostname" | $CUT -d' ' -f1
-   fi
+    local ip="$1"
+    # 从 leases 文件中查找对应 IP 的记录
+    local line=$($GREP "$ip" /tmp/dnsmasq.leases 2>/dev/null)
+    local hostname=$(echo "$line" | $AWK '{print $4}' 2>/dev/null)
+    local mac=$(echo "$line" | $AWK '{print $2}' 2>/dev/null)
+    
+    # 清理主机名，去除换行符和特殊字符
+    hostname=$(echo "$hostname" | tr -d '\n\r' | sed 's/[^a-zA-Z0-9._-]//g')
+    
+    # 如果主机名无效或为空，尝试使用设备类型
+    if [ -z "$hostname" ] || [ "$hostname" = "Unknown" ] || [ "$hostname" = "*" ] || \
+       [ "$hostname" = "wlan0" ] || echo "$hostname" | $GREP -q "^[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]" 2>/dev/null; then
+        if [ ! -z "$mac" ]; then
+            get_device_type "$mac"  # 调用设备类型判断函数
+        else
+            echo "未知设备"
+        fi
+    else
+        # 返回清理后的主机名
+        echo "$hostname"
+    fi
 }
 
 # 创建JSON数组开始
