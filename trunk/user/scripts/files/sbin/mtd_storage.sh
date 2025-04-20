@@ -536,13 +536,6 @@ server=119.29.29.29
 server=223.6.6.6
 server=180.76.76.76
 
-# IPv6 DNS服务器
-server=2400:3200::1
-server=2402:4e00::
-server=2400:da00::6666
-server=2606:4700:4700::1111
-server=2001:4860:4860::8888
-
 EOF
 		chmod 644 "$user_dnsmasq_servers"
 	fi
