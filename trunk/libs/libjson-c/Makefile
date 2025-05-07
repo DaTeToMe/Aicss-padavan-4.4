@@ -1,11 +1,11 @@
 include $(ROOTDIR)/rules.mk
 
 PKG_NAME:=json-c
-PKG_VERSION:=0.17
+PKG_VERSION:=0.18
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://s3.amazonaws.com/json-c_releases/releases/
-PKG_HASH:=7550914d58fb63b2c3546f3ccfbe11f1c094147bd31a69dcd23714d7956159e6
+PKG_HASH:=876ab046479166b869afc6896d288183bbc0e5843f141200c677b3e8dfb11724
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/cmake.mk
