@@ -4,7 +4,7 @@
  * Create a squashfs filesystem.  This is a highly compressed read only
  * filesystem.
  *
- * Copyright (c) 2021, 2024
+ * Copyright (c) 2021, 2024, 2025
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -66,17 +66,4 @@ extern FILE *info_file;
 			prep_exit();\
 			exit(1);\
 		} while(0)
-
-#define BAD_ERROR(s, args...) \
-		do {\
-			progressbar_error("FATAL ERROR: " s, ##args); \
-			EXIT_MKSQUASHFS();\
-		} while(0)
-
-#define MEM_ERROR() \
-	do {\
-		progressbar_error("FATAL ERROR: Out of memory (%s)\n", \
-								__func__); \
-		EXIT_MKSQUASHFS();\
-	} while(0)
 #endif

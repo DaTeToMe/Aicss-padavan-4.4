@@ -2,7 +2,7 @@
  * Create a squashfs filesystem.  This is a highly compressed read only
  * filesystem.
  *
- * Copyright (c) 2013, 2014, 2019, 2021, 2022, 2023, 2024
+ * Copyright (c) 2013, 2014, 2019, 2021, 2022, 2023, 2024, 2025
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -71,9 +71,9 @@ static void print_filename()
 		return;
 
 	if(dir_ent->our_dir->subpath[0] != '\0')
-		INFO("%s/%s\n", dir_ent->our_dir->subpath, dir_ent->name);
+		progressbar_info("%s/%s\n", dir_ent->our_dir->subpath, dir_ent->name);
 	else
-		INFO("/%s\n", dir_ent->name);
+		progressbar_info("/%s\n", dir_ent->name);
 }
 
 

@@ -2,7 +2,7 @@
  * Create a squashfs filesystem.  This is a highly compressed read only
  * filesystem.
  *
- * Copyright (C) 2023, 2024
+ * Copyright (C) 2023, 2024, 2025
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -40,6 +40,7 @@
 #include "tar.h"
 #include "action.h"
 #include "xattr_compat.h"
+#include "alloc.h"
 
 extern regex_t *xattr_exclude_preg;
 extern regex_t *xattr_include_preg;
@@ -66,10 +67,7 @@ int read_xattrs_from_system(struct dir_ent *dir_ent, char *filename,
 			return 0;
 		}
 
-		xattr_names = malloc(size);
-		if(xattr_names == NULL)
-			MEM_ERROR();
-
+		xattr_names = MALLOC(size);
 		size = llistxattr(filename, xattr_names, size);
 		if(size < 0) {
 			free(xattr_names);
@@ -92,7 +90,6 @@ int read_xattrs_from_system(struct dir_ent *dir_ent, char *filename,
 	xattr_inc_list = eval_xattr_inc_actions(root_dir, dir_ent);
 
 	for(p = xattr_names; p < xattr_names + size;) {
-		struct xattr_list *x;
 		int res;
 
 		res = match_xattr_exc_actions(xattr_exc_list, p);
@@ -123,11 +120,7 @@ int read_xattrs_from_system(struct dir_ent *dir_ent, char *filename,
 			}
 		}
 
-		x = realloc(xattr_list, (i + 1) * sizeof(struct xattr_list));
-		if(x == NULL)
-			MEM_ERROR();
-		xattr_list = x;
-
+		xattr_list = REALLOC(xattr_list, (i + 1) * sizeof(struct xattr_list));
 		xattr_list[i].type = xattr_get_prefix(&xattr_list[i], p);
 
 		if(xattr_list[i].type == -1) {
@@ -150,10 +143,7 @@ int read_xattrs_from_system(struct dir_ent *dir_ent, char *filename,
 				goto failed;
 			}
 
-			xattr_list[i].value = malloc(vsize);
-			if(xattr_list[i].value == NULL)
-				MEM_ERROR();
-
+			xattr_list[i].value = MALLOC(vsize);
 			vsize = lgetxattr(filename, xattr_list[i].full_name,
 						xattr_list[i].value, vsize);
 			if(vsize < 0) {

@@ -7,17 +7,28 @@
 # the command line.
 #
 ifndef CONFIG
+###############################################
+#            Compression algorithms           #
+###############################################
+#
+# All of the compression algorithms (gzip, lzo, lz4, xz and zstd) are
+# by default selected to be built.
+#
+# To unselect an algorithm comment out the XXX_SUPPORT = 1 line.
+#
+# Obviously you may need to install the compression algorithm devel
+# packages, otherwise the build will fail.
+#
 ############# Building gzip support ###########
 #
-# Gzip support is by default enabled, and the compression type default
-# (COMP_DEFAULT) is gzip.
+# The compression type default (COMP_DEFAULT) is gzip.
 #
 # If you don't want/need gzip support then comment out the GZIP SUPPORT line
 # below, and change COMP_DEFAULT to one of the compression types you have
 # selected.
 #
-# Obviously, you must select at least one of the available gzip, xz, lzo,
-# lz4, zstd or lzma (deprecated) compression types.
+# Obviously at least one of the compression types must be built and selected
+# as the default compression type.
 #
 #GZIP_SUPPORT = 1
 
@@ -31,9 +42,7 @@ ifndef CONFIG
 # supported by most modern distributions.  Please refer to
 # your distribution package manager.
 #
-# To build install the library and uncomment
-# the XZ_SUPPORT line below.
-#
+# To skip building ZX support comment out the line below.
 XZ_SUPPORT = 1
 
 # Enable support for OpenWrt extended compression options by uncommenting
@@ -49,9 +58,7 @@ XZ_SUPPORT = 1
 # supported by most modern distributions.  Please refer to
 # your distribution package manager.
 #
-# To build install the library and uncomment
-# the LZO_SUPPORT line below.
-#
+# To skip building LZO support comment out the line below.
 #LZO_SUPPORT = 1
 
 
@@ -65,9 +72,7 @@ XZ_SUPPORT = 1
 # supported by most modern distributions.  Please refer to
 # your distribution package manager.
 #
-# To build install and uncomment
-# the LZ4_SUPPORT line below.
-#
+# To skip building LZ4 support comment out the line below.
 #LZ4_SUPPORT = 1
 
 
@@ -81,9 +86,7 @@ XZ_SUPPORT = 1
 # supported by most modern distributions.  Please refer to
 # your distribution package manager.
 #
-# To build install the library and uncomment
-# the ZSTD_SUPPORT line below.
-#
+# To skip building ZSTD support comment out the line below.
 #ZSTD_SUPPORT = 1
 
 
@@ -125,6 +128,30 @@ XATTR_OS_SUPPORT = 1
 # default.  Users can enable xattrs by using the -xattrs option.
 XATTR_DEFAULT = 1
 
+
+###############################################
+#       Parallel reader thread options        #
+###############################################
+#
+# Select how many reader threads are enabled by default.  The options are:
+#
+# 1. A single reader thread, as was traditionally used in Mksquashfs.  This
+#    is the lowest performing and most conservative option.
+#
+# 2. The default number of small reader threads and block reader threads given
+#    here.  These values are intended to give a peformance boost on media
+#    that will benefit from parallel reads (e.g. modern SSD drives), but not
+#    affect performance on other media that won't benefit from parallel reads.
+#
+# 3. A custom default setting of small reader threads and block reader threads.
+#    The higher the number of threads the greater the performance boost on
+#    filesystems with lots of small files, and/or media that benefits from
+#    a high amount of parallelism such as network filesystems.
+#
+# Uncomment next line to use a single reader thread
+#SINGLE_READER_THREAD = 1
+SMALL_READER_THREADS = 8
+BLOCK_READER_THREADS = 3
 
 ###############################################
 #          Reproducible Image options         #
@@ -221,6 +248,9 @@ LZMA_SUPPORT ?= 0
 LZMA_DIR ?= ../../../../LZMA/lzma465
 XZ_EXTENDED_OPTIONS ?= 0
 DONT_USE_ATOMIC_EXCHANGE_N ?= 0
+SINGLE_READER_THREAD ?= 0
+SMALL_READER_THREADS ?= 8
+BLOCK_READER_THREDS ?= 3
 endif
 
 
@@ -361,7 +391,29 @@ ifeq ($(DONT_USE_ATOMIC_EXCHANGE_N),1)
 CFLAGS += -DDONT_USE_ATOMIC_EXCHANGE_N
 endif
 
-#
+MAX_READER_THREADS=1024
+CFLAGS+= -DMAX_READER_THREADS=$(MAX_READER_THREADS)
+
+ifeq ($(SINGLE_READER_THREAD),1)
+CFLAGS += -DSINGLE_READER_THREAD
+else
+ifeq ($(shell [ $(SMALL_READER_THREADS) -gt $(MAX_READER_THREADS) ] && echo Y),Y)
+$(error SMALL_READER_THREADS is too large, it must be $(MAX_READER_THREADS) \
+	or less and not 0)
+endif
+ifeq ($(shell [ $(SMALL_READER_THREADS) -le 0 ] && echo Y),Y)
+$(error SMALL_READER_THREADS should not be negative or 0!)
+endif
+ifeq ($(shell [ $(BLOCK_READER_THREADS) -gt $(MAX_READER_THREADS) ] && echo Y),Y)
+$(error BLOCK_READER_THREADS is too large, it must be $(MAX_READER_THREADS) \
+	or less and not 0)
+endif
+ifeq ($(shell [ $(BLOCK_READER_THREADS) -le 0 ] && echo Y),Y)
+$(error BLOCK_READER_THREADS should not be negative or 0!)
+endif
+CFLAGS += -DSMALL_READER_THREADS=$(SMALL_READER_THREADS) -DBLOCK_READER_THREADS=$(BLOCK_READER_THREADS)
+endif
+
 # If LZMA_SUPPORT is specified then LZMA_DIR must be specified too
 #
 ifeq ($(LZMA_SUPPORT),1)
@@ -403,7 +455,6 @@ $(error "COMP_DEFAULT is set to ${COMP_DEFAULT}, which isn't selected to be \
 endif
 
 space := $(subst ,, )
-#CFLAGS += -DCOMPRESSORS="\"$(subst @, ,$(subst $(space),\n\t\t\t\t,$(COMPRESSORS)))\""
 
 #
 # Get VERSION and DATE for Mksquashfs/Unsquashfs version strings.

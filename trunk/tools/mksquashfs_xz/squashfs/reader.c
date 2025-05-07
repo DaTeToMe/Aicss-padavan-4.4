@@ -2,7 +2,7 @@
  * Create a squashfs filesystem.  This is a highly compressed read only
  * filesystem.
  *
- * Copyright (c) 2021, 2022, 2024
+ * Copyright (c) 2021, 2022, 2024, 2025
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -50,17 +50,16 @@
 #include "reader.h"
 #include "atomic_swap.h"
 #include "caches-queues-lists.h"
+#include "alloc.h"
 
 #define READER_ALLOC 1024
 
-static int reader_threads = 6, fragment_threads = 3, block_threads = 3;
 static struct reader *reader = NULL;
 static struct readahead **readahead_table = NULL;
 static pthread_t *reader_thread = NULL;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static int total_rblocks, total_rmbytes;
 static int total_wblocks, total_wmbytes;
-static int single_threaded = FALSE;
 
 /* if throttling I/O, time to sleep between reads (in tenths of a second) */
 static int sleep_time;
@@ -75,6 +74,33 @@ static unsigned int fragment_count = 0;
 
 extern struct queue_cache *bwriter_buffer;
 extern int processors;
+
+#ifdef SINGLE_READER_THREAD
+static int reader_threads = 1, fragment_threads = 0, block_threads = 1;
+static int single_threaded = TRUE;
+static int block_opt = FALSE;
+static int frag_opt = FALSE;
+
+int readers_sane()
+{
+	/*
+	 * The mksquashfs default is a single reader.  Changing from a single
+	 * reader requires the user to specify both -small-readers and
+	 * -block-readers options.
+	 */
+	if(frag_opt && block_opt) {
+		single_threaded = FALSE;
+		return TRUE;
+	}
+
+	return !frag_opt && !block_opt;
+}
+#else
+static int fragment_threads = SMALL_READER_THREADS;
+static int block_threads = BLOCK_READER_THREADS;
+static int reader_threads = SMALL_READER_THREADS + BLOCK_READER_THREADS;
+static int single_threaded = FALSE;
+#endif
 
 static void sigalrm_handler(int arg)
 {
@@ -92,11 +118,8 @@ static char *pathname(struct reader *reader, struct dir_ent *dir_ent)
 	if (dir_ent->nonstandard_pathname)
 		return dir_ent->nonstandard_pathname;
 
-	if(reader->pathname == NULL) {
-		reader->pathname = malloc(ALLOC_SIZE);
-		if(reader->pathname == NULL)
-			MEM_ERROR();
-	}
+	if(reader->pathname == NULL)
+		reader->pathname = MALLOC(ALLOC_SIZE);
 
 	for(;;) {
 		int res = snprintf(reader->pathname, reader->size, "%s/%s",
@@ -111,9 +134,7 @@ static char *pathname(struct reader *reader, struct dir_ent *dir_ent)
 			 * increase it and try again
 			 */
 			reader->size = (res + ALLOC_SIZE) & ~(ALLOC_SIZE - 1);
-			reader->pathname = realloc(reader->pathname, reader->size);
-			if(reader->pathname == NULL)
-				MEM_ERROR();
+			reader->pathname = REALLOC(reader->pathname, reader->size);
 		} else
 			break;
 	}
@@ -469,12 +490,8 @@ static int get_readahead(struct pseudo_file *file, long long current,
 					memcpy(dest, buffer->src + offset - buffer_offset, size);
 
 					/* Split buffer into two */
-					left = malloc(sizeof(struct readahead) + left_size);
-					right = malloc(sizeof(struct readahead) + right_size);
-
-					if(left == NULL || right == NULL)
-						MEM_ERROR();
-
+					left = MALLOC(sizeof(struct readahead) + left_size);
+					right = MALLOC(sizeof(struct readahead) + right_size);
 					left->start = buffer->start;
 					left->size = left_size;
 					left->src = left->data;
@@ -511,20 +528,14 @@ static int do_readahead(struct pseudo_file *file, long long current,
 	long long readahead = current - file->current;
 
 	if(readahead_table == NULL) {
-		readahead_table = malloc(READAHEAD_ALLOC);
-		if(readahead_table == NULL)
-			MEM_ERROR();
-
+		readahead_table = MALLOC(READAHEAD_ALLOC);
 		memset(readahead_table, 0, READAHEAD_ALLOC);
 	}
 
 	while(readahead) {
 		int offset = READAHEAD_OFFSET(file->current);
 		int bytes = READAHEAD_SIZE - offset < readahead ? READAHEAD_SIZE - offset : readahead;
-		struct readahead *buffer = malloc(sizeof(struct readahead) + bytes);
-
-		if(buffer == NULL)
-			MEM_ERROR();
+		struct readahead *buffer = MALLOC(sizeof(struct readahead) + bytes);
 
 		res = get_bytes(buffer->data, bytes);
 
@@ -673,19 +684,10 @@ static void reader_read_data(struct reader *reader, struct read_entry *entry)
 
 static void _add_entry(struct dir_ent *entry, struct read_entry ***array, unsigned int *count)
 {
-	if(*array == NULL || *count % READER_ALLOC == 0) {
-		struct read_entry **tmp = realloc(*array, (*count + READER_ALLOC) * sizeof(struct read_entry *));
+	if(*array == NULL || *count % READER_ALLOC == 0)
+		*array = REALLOC(*array, (*count + READER_ALLOC) * sizeof(struct read_entry *));
 
-		if(tmp == NULL)
-			MEM_ERROR();
-
-		*array = tmp;
-	}
-
-	(*array)[*count] = malloc(sizeof(struct read_entry));
-	if((*array)[*count] == NULL)
-		MEM_ERROR();
-
+	(*array)[*count] = MALLOC(sizeof(struct read_entry));
 	(*array)[*count]->dir_ent = entry;
 	(*array)[(*count) ++]->file_count = file_count ++;
 }
@@ -725,7 +727,7 @@ static void create_resources()
 {
 	int i, per_rthread = total_rblocks / reader_threads;
 	int total_fwthread = (processors + 1) * fragment_threads;
-	int per_wthread = (total_wblocks - total_fwthread) / block_threads;
+	int per_wthread = (total_wblocks - total_fwthread) / (block_threads ? block_threads : 1);
 
 	queue_cache_set(bwriter_buffer, fragment_threads, processors + 1,
 		block_threads, per_wthread, per_rthread);
@@ -735,9 +737,7 @@ static void create_resources()
 	pthread_cleanup_push((void *) pthread_mutex_unlock, &mutex);
 	pthread_mutex_lock(&mutex);
 
-	reader = malloc(reader_threads * sizeof(struct reader));
-	if(reader == NULL)
-		MEM_ERROR();
+	reader = MALLOC(reader_threads * sizeof(struct reader));
 
 	for(i = 0; i < reader_threads; i++) {
 		reader[i].id = i;
@@ -827,9 +827,7 @@ static void multi_thread(struct dir_info *dir)
 	pthread_cleanup_push((void *) pthread_mutex_unlock, &mutex);
 	pthread_mutex_lock(&mutex);
 
-	thread = malloc(reader_threads * sizeof(pthread_t));
-	if(thread == NULL)
-		MEM_ERROR();
+	thread = MALLOC(reader_threads * sizeof(pthread_t));
 
 	for(i = 0; i < fragment_threads; i++) {
 		reader[i].type = "small";
@@ -964,27 +962,23 @@ pthread_t *get_reader_threads(int *num)
 }
 
 
-int set_read_frag_threads(int fragments)
+void set_read_frag_threads(int fragments)
 {
-	if(fragments <= 0 || fragments > 8192)
-		return FALSE;
-
 	fragment_threads = fragments;
 	reader_threads = fragment_threads + block_threads;
-
-	return TRUE;
+#ifdef SINGLE_READER_THREAD
+	frag_opt = TRUE;
+#endif
 }
 
 
-int set_read_block_threads(int blocks)
+void set_read_block_threads(int blocks)
 {
-	if(blocks <= 0 || blocks > 8192)
-		return FALSE;
-
 	block_threads = blocks;
 	reader_threads = fragment_threads + block_threads;
-
-	return TRUE;
+#ifdef SINGLE_READER_THREAD
+	block_opt = TRUE;
+#endif
 }
 
 
@@ -1014,11 +1008,11 @@ void check_min_memory(int rmbytes, int wmbytes, int block_log)
 	int rblocks = rmbytes << (20 - block_log);
 	int wblocks = wmbytes << (20 - block_log);
 	int per_rthread = rblocks / reader_threads;
-	int total_fwthread = (processors + 1) * fragment_threads;
+	int total_fwthread = processors * fragment_threads;
 	int per_wthread = (wblocks - total_fwthread) / block_threads;
 
-	if(per_wthread < (processors + 1) || per_rthread < BLOCKS_MIN) {
-		int twblocks = total_fwthread + (processors + 1) * block_threads;
+	if(per_wthread < processors || per_rthread < BLOCKS_MIN) {
+		int twblocks = total_fwthread + processors * block_threads;
 		int twmbytes = twblocks >> (20 - block_log) ? : 1;
 		int twmin_mem = twmbytes * SQUASHFS_BWRITEQ_MEM;
 		int trblocks = BLOCKS_MIN * reader_threads;
@@ -1034,33 +1028,30 @@ void check_min_memory(int rmbytes, int wmbytes, int block_log)
 		if(reader_only && !single_threaded) {
 			ERROR("Alternatively, you could try reducing the "
 				"number of reader threads\n"
-				"(-single-reader-thread option, and "
-				"-small-reader-threads/-block-reader-threads\n"
-				"options)\n\n");
+				"(-single-reader thread option, and "
+				"-small-readers/-block-readers options)\n\n");
 			ERROR("Current options:\n");
-			ERROR("\t-small-reader-threads is set to %d\n", fragment_threads);
-			ERROR("\t-block-reader-threads is set to %d\n\n", block_threads);
+			ERROR("\t-small-readers is set to %d\n", fragment_threads);
+			ERROR("\t-block-readers is set to %d\n\n", block_threads);
 		} else if(!reader_only && !single_threaded && processors > 1) {
 			ERROR("Alternatively, you could try reducing the "
 				"number of reader threads\n"
-				"(-single-reader-thread option, and "
-				"-small-reader-threads/-block-reader-threads\n"
-				"options)\n\n");
+				"(-single-reader thread option, and "
+				"-small-readers/-block-readers options)\n\n");
 			ERROR("Or you could reduce the number of processors "
 				"used (-processors option)\n\n");
 			ERROR("Current options:\n");
-			ERROR("\t-small-reader-threads is set to %d\n", fragment_threads);
-			ERROR("\t-block-reader-threads is set to %d\n", block_threads);
+			ERROR("\t-small-readers is set to %d\n", fragment_threads);
+			ERROR("\t-block-readers is set to %d\n", block_threads);
 			ERROR("\t-processors is set to %d\n\n", processors);
 		} else if(!reader_only && !single_threaded && processors == 1) {
 			ERROR("Alternatively, you could try reducing the "
 				"number of reader threads\n"
-				"(-single-reader-thread option, and "
-				"-small-reader-threads/-block-reader-threads\n"
-				"options)\n\n");
+				"(-single-reader thread option, and "
+				"-small-readers/-block-readers options)\n\n");
 			ERROR("Current options:\n");
-			ERROR("\t-small-reader-threads is set to %d\n", fragment_threads);
-			ERROR("\t-block-reader-threads is set to %d\n", block_threads);
+			ERROR("\t-small-readers is set to %d\n", fragment_threads);
+			ERROR("\t-block-readers is set to %d\n", block_threads);
 		} else if(!reader_only && single_threaded && processors > 1) {
 			ERROR("Alternatively, you could reduce the number of "
 				"processors used (-processors option)\n\n");

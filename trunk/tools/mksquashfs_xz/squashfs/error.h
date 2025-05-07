@@ -4,7 +4,7 @@
  * Create a squashfs filesystem.  This is a highly compressed read only
  * filesystem.
  *
- * Copyright (c) 2012, 2013, 2014, 2019, 2021
+ * Copyright (c) 2012, 2013, 2014, 2019, 2021, 2025
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -28,6 +28,7 @@ extern void progressbar_error(char *fmt, ...)
 	__attribute__ ((format (printf, 1, 2)));
 extern void progressbar_info(char *fmt, ...)
 	__attribute__ ((format (printf, 1, 2)));
+extern void pre_exit_squashfs();
 
 #ifdef SQUASHFS_TRACE
 #define TRACE(s, args...) \
@@ -43,3 +44,18 @@ extern void progressbar_info(char *fmt, ...)
 			progressbar_error(s, ## args); \
 		} while(0)
 #endif
+
+#define MEM_ERROR(func) \
+	do {\
+		progressbar_error("FATAL ERROR: Out of memory (%s)\n", \
+								func); \
+		pre_exit_squashfs();\
+		exit(1); \
+	} while(0)
+
+#define BAD_ERROR(s, args...) \
+	do {\
+		progressbar_error("FATAL ERROR: " s, ##args); \
+		pre_exit_squashfs();\
+		exit(1); \
+	} while(0)

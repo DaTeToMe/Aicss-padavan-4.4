@@ -3,7 +3,7 @@
 /*
  * Squashfs
  *
- * Copyright (c) 2024
+ * Copyright (c) 2024, 2025
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -56,6 +56,18 @@
 #define XOPT_STR " (unsupported)"
 #endif
 
+#ifdef SINGLE_READER_THREAD
+#define SINGLE_STR " (default)"
+#define SMALL_STR
+#define BLOCK_STR
+#else
+#define STRING(x) #x
+#define STRINGIFY(x) STRING(x)
+#define SINGLE_STR
+#define SMALL_STR  " (default " STRINGIFY(SMALL_READER_THREADS) ")"
+#define BLOCK_STR  " (default " STRINGIFY(BLOCK_READER_THREADS) ")"
+#endif
+
 #define TRUE 1
 #define FALSE 0
 
@@ -63,14 +75,14 @@ extern void mksquashfs_help_all(void);
 extern void mksquashfs_option(char *opt_name, char *pattern);
 extern void mksquashfs_section(char *opt_name, char *sec_name);
 extern void mksquashfs_invalid_option(char *opt_name);
-extern void mksquashfs_help(int error);
-extern void mksquashfs_option_help(char *option);
+extern void mksquashfs_help(char *message);
+extern void mksquashfs_option_help(char *option, const char *restrict fmt, ...);
 extern void sqfstar_help_all(void);
 extern void sqfstar_option(char *opt_name, char *pattern);
 extern void sqfstar_section(char *opt_name, char *sec_name);
 extern void sqfstar_invalid_option(char *opt_name);
-extern void sqfstar_help(int error);
-extern void sqfstar_option_help(char *option);
+extern void sqfstar_help(char *message);
+extern void sqfstar_option_help(char *option, const char *restrict fmt, ...);
 extern void display_compressors(void);
 extern void print_compressor_options(char *comp_name, char *prog_name);
 #endif

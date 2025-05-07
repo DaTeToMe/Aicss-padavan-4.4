@@ -2,7 +2,8 @@
  * Create a squashfs filesystem.  This is a highly compressed read only
  * filesystem.
  *
- * Copyright (c) 2009, 2010, 2012, 2014, 2017, 2019, 2021, 2022, 2023, 2024
+ * Copyright (c) 2009, 2010, 2012, 2013, 2014, 2017, 2019, 2021, 2022, 2023,
+ * 2024, 2025
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -46,6 +47,7 @@
 #include "squashfs_fs.h"
 #include "mksquashfs.h"
 #include "xattr.h"
+#include "alloc.h"
 
 #define TRUE 1
 #define FALSE 0
@@ -85,7 +87,7 @@ char *get_element(char *target, char **targname, char **subpathend)
 	while(*target != '/' && *target != '\0')
 		target ++;
 
-	*targname = strndup(start, target - start);
+	*targname = STRNDUP(start, target - start);
 	*subpathend = target;
 
 	while(*target == '/')
@@ -110,12 +112,9 @@ struct pseudo_entry *pseudo_search(struct pseudo *pseudo, char *targname,
 			break;
 	}
 
-	ent = malloc(sizeof(struct pseudo_entry));
-	if(ent == NULL)
-		MEM_ERROR();
-
+	ent = MALLOC(sizeof(struct pseudo_entry));
 	ent->name = targname;
-	ent->pathname = strndup(alltarget, subpathend - alltarget);
+	ent->pathname = STRNDUP(alltarget, subpathend - alltarget);
 	ent->dev = NULL;
 	ent->pseudo = NULL;
 	ent->xattr = NULL;
@@ -148,10 +147,7 @@ static struct pseudo *add_pseudo(struct pseudo *pseudo, struct pseudo_dev *pseud
 	target = get_element(target, &targname, &subpathend);
 
 	if(pseudo == NULL) {
-		pseudo = malloc(sizeof(struct pseudo));
-		if(pseudo == NULL)
-			MEM_ERROR();
-
+		pseudo = MALLOC(sizeof(struct pseudo));
 		pseudo->names = 0;
 		pseudo->current = NULL;
 		pseudo->head = NULL;
@@ -251,16 +247,11 @@ static struct pseudo *add_pseudo_definition(struct pseudo *pseudo, struct pseudo
 			pseudo->head->dev = pseudo_dev;
 			return pseudo;
 		} else {
-			struct pseudo *new = malloc(sizeof(struct pseudo));
-			if(new == NULL)
-				MEM_ERROR();
+			struct pseudo *new = MALLOC(sizeof(struct pseudo));
 
 			new->names = 1;
 			new->current = NULL;
-			new->head = malloc(sizeof(struct pseudo_entry));
-			if(new->head == NULL)
-				MEM_ERROR();
-
+			new->head = MALLOC(sizeof(struct pseudo_entry));
 			new->head->name = "/";
 			new->head->pseudo = pseudo;
 			new->head->pathname = "/";
@@ -416,9 +407,7 @@ static struct pseudo_dev *read_pseudo_def_pseudo_link(char *orig_def, char *def)
 	 * Filenames with spaces should either escape (backslash) the
 	 * space or use double quotes.
 	 */
-	linkname = malloc(strlen(def) + 1);
-	if(linkname == NULL)
-		MEM_ERROR();
+	linkname = MALLOC(strlen(def) + 1);
 
 	for(link = linkname; (quoted || !isspace(*def)) && *def != '\0';) {
 		if(*def == '"') {
@@ -485,10 +474,7 @@ static struct pseudo_dev *read_pseudo_def_link(char *orig_def, char *def, char *
 	 * file will not exist).
 	 */
 	if(dest_buf == NULL) {
-		dest_buf = malloc(sizeof(struct stat));
-		if(dest_buf == NULL)
-			MEM_ERROR();
-
+		dest_buf = MALLOC(sizeof(struct stat));
 		memset(dest_buf, 0, sizeof(struct stat));
 		lstat(destination, dest_buf);
 	}
@@ -501,9 +487,7 @@ static struct pseudo_dev *read_pseudo_def_link(char *orig_def, char *def, char *
 	 * Filenames with spaces should either escape (backslash) the
 	 * space or use double quotes.
 	 */
-	linkname = malloc(strlen(def) + 1);
-	if(linkname == NULL)
-		MEM_ERROR();
+	linkname = MALLOC(strlen(def) + 1);
 
 	for(link = linkname; (quoted || !isspace(*def)) && *def != '\0';) {
 		if(*def == '"') {
@@ -539,15 +523,9 @@ static struct pseudo_dev *read_pseudo_def_link(char *orig_def, char *def, char *
 		linkname = resolved_linkname;
 	}
 
-	dev = malloc(sizeof(struct pseudo_dev));
-	if(dev == NULL)
-		MEM_ERROR();
-
+	dev = MALLOC(sizeof(struct pseudo_dev));
 	memset(dev, 0, sizeof(struct pseudo_dev));
-
-	dev->linkbuf = malloc(sizeof(struct stat));
-	if(dev->linkbuf == NULL)
-		MEM_ERROR();
+	dev->linkbuf = MALLOC(sizeof(struct stat));
 
 	if(lstat(linkname, dev->linkbuf) == -1) {
 		ERROR("Cannot stat pseudo link file %s because %s\n",
@@ -576,7 +554,7 @@ static struct pseudo_dev *read_pseudo_def_link(char *orig_def, char *def, char *
 
 	dev->type = 'l';
 	dev->pseudo_type = PSEUDO_FILE_OTHER;
-	dev->linkname = strdup(linkname);
+	dev->linkname = STRDUP(linkname);
 
 	free(linkname);
 	return dev;
@@ -620,9 +598,7 @@ static struct pseudo_dev *read_pseudo_def_extended(char type, char *orig_def,
 		 * Strings with spaces should either escape (backslash) the
 		 * space or use double quotes.
 		 */
-		string = malloc(strlen(def) + 1);
-		if(string == NULL)
-			MEM_ERROR();
+		string = MALLOC(strlen(def) + 1);
 
 		for(str = string; (quoted || !isspace(*def)) && *def != '\0';) {
 			if(*def == '"') {
@@ -860,14 +836,8 @@ static struct pseudo_dev *read_pseudo_def_extended(char type, char *orig_def,
 		break;
 	}
 
-	dev = malloc(sizeof(struct pseudo_dev));
-	if(dev == NULL)
-		MEM_ERROR();
-
-	dev->buf = malloc(sizeof(struct pseudo_stat));
-	if(dev->buf == NULL)
-		MEM_ERROR();
-
+	dev = MALLOC(sizeof(struct pseudo_dev));
+	dev->buf = MALLOC(sizeof(struct pseudo_stat));
 	dev->type = type == 'M' ? 'M' : tolower(type);
 	dev->buf->mode = mode;
 	dev->buf->uid = uid;
@@ -886,18 +856,12 @@ static struct pseudo_dev *read_pseudo_def_extended(char type, char *orig_def,
 		force_single_threaded = TRUE;
 
 		if(*file == NULL) {
-			*file = malloc(sizeof(struct pseudo_file));
-			if(*file == NULL)
-				MEM_ERROR();
-
-			(*file)->filename = strdup(pseudo_file);
+			*file = MALLOC(sizeof(struct pseudo_file));
+			(*file)->filename = STRDUP(pseudo_file);
 			(*file)->fd = -1;
 		}
 
-		dev->data = malloc(sizeof(struct pseudo_data));
-		if(dev->data == NULL)
-			MEM_ERROR();
-
+		dev->data = MALLOC(sizeof(struct pseudo_data));
 		dev->pseudo_type = PSEUDO_FILE_DATA;
 		dev->data->file = *file;
 		dev->data->length = file_length;
@@ -905,12 +869,12 @@ static struct pseudo_dev *read_pseudo_def_extended(char type, char *orig_def,
 		dev->data->sparse = sparse;
 	} else if(type == 'F') {
 		dev->pseudo_type = PSEUDO_FILE_PROCESS;
-		dev->command = strdup(command);
+		dev->command = STRDUP(command);
 	} else
 		dev->pseudo_type = PSEUDO_FILE_OTHER;
 
 	if(type == 'S')
-		dev->symlink = strdup(symlink);
+		dev->symlink = STRDUP(symlink);
 
 	return dev;
 }
@@ -1093,14 +1057,8 @@ static struct pseudo_dev *read_pseudo_def_original(char type, char *orig_def, ch
 		break;
 	}
 
-	dev = malloc(sizeof(struct pseudo_dev));
-	if(dev == NULL)
-		MEM_ERROR();
-
-	dev->buf = malloc(sizeof(struct pseudo_stat));
-	if(dev->buf == NULL)
-		MEM_ERROR();
-
+	dev = MALLOC(sizeof(struct pseudo_dev));
+	dev->buf = MALLOC(sizeof(struct pseudo_stat));
 	dev->type = type;
 	dev->buf->mode = mode;
 	dev->buf->uid = uid;
@@ -1112,12 +1070,12 @@ static struct pseudo_dev *read_pseudo_def_original(char type, char *orig_def, ch
 
 	if(type == 'f') {
 		dev->pseudo_type = PSEUDO_FILE_PROCESS;
-		dev->command = strdup(command);
+		dev->command = STRDUP(command);
 	} else
 		dev->pseudo_type = PSEUDO_FILE_OTHER;
 
 	if(type == 's')
-		dev->symlink = strdup(symlink);
+		dev->symlink = STRDUP(symlink);
 
 	return dev;
 }
@@ -1166,9 +1124,7 @@ static int read_pseudo_def(char *def, char *destination, char *pseudo_file, stru
 	 * Filenames with spaces should either escape (backslash) the
 	 * space or use double quotes.
 	 */
-	filename = malloc(strlen(def) + 1);
-	if(filename == NULL)
-		MEM_ERROR();
+	filename = MALLOC(strlen(def) + 1);
 
 	for(name = filename; (quoted || !isspace(*def)) && *def != '\0';) {
 		if(*def == '"') {
@@ -1298,11 +1254,8 @@ int read_pseudo_file(char *filename, char *destination)
 		while(1) {
 			int len;
 
-			if(total + (MAX_LINE + 1) > size) {
-				line = realloc(line, size += (MAX_LINE + 1));
-				if(line == NULL)
-					MEM_ERROR();
-			}
+			if(total + (MAX_LINE + 1) > size)
+				line = REALLOC(line, size += (MAX_LINE + 1));
 
 			err = fgets(line + total, MAX_LINE + 1, fd);
 			if(err == NULL)
@@ -1420,16 +1373,13 @@ struct pseudo *get_pseudo()
 #ifdef SQUASHFS_TRACE
 static void dump_pseudo(struct pseudo *pseudo, char *string)
 {
-	int res;
 	char *path;
 	struct pseudo_entry *entry;
 
 	for(entry = pseudo->head; entry; entry = entry->next) {
-		if(string) {
-			res = asprintf(&path, "%s/%s", string, entry->name);
-			if(res == -1)
-				BAD_ERROR("asprintf failed in dump_pseudo\n");
-		} else
+		if(string)
+			ASPRINTF(&path, "%s/%s", string, entry->name);
+		else
 			path = entry->name;
 		if(entry->dev)
 			ERROR("%s %c 0%o %d %d %d %d\n", path, entry->dev->type,

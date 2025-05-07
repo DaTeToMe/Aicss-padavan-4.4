@@ -1,7 +1,7 @@
 /*
  * Squashfs
  *
- * Copyright (c) 2024
+ * Copyright (c) 2024, 2025
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -31,6 +31,7 @@
 #include "mksquashfs_help.h"
 #include "print_pager.h"
 #include "compressor.h"
+#include "alloc.h"
 
 #define MKSQUASHFS_SYNTAX "SYNTAX: %s source1 source2 ...  FILESYSTEM " \
 	"[OPTIONS] [-e list of exclude dirs/files]\n\n"
@@ -38,96 +39,163 @@
 #define SQFSTAR_SYNTAX "SYNTAX: %s [OPTIONS] FILESYSTEM [list of exclude dirs/files]\n\n"
 
 static char *mksquashfs_options[]={
+	/* compression options */
 	"", "", "-b", "-comp", "-noI", "-noId", "-noD", "-noF", "-noX",
-	"-no-compression", "", "", "", "-tar", "-no-strip", "-tarstyle",
-	"-cpiostyle", "-cpiostyle0", "-reproducible", "-not-reproducible",
-	"-mkfs-time", "-all-time", "-root-time", "-root-mode", "-root-uid",
-	"-root-gid", "-all-root", "-force-file-mode", "-force-dir-mode",
-	"-force-uid", "-force-gid", "-uid-gid-offset", "-pseudo-override", "-no-exports",
-	"-exports", "-no-sparse", "-no-tailends", "-tailends", "-no-fragments",
+	"-no-compression", "", "", "",
+	/* build options */
+	"-tar", "-no-strip", "-tarstyle", "-cpiostyle", "-cpiostyle0",
+	"-reproducible", "-not-reproducible", "-no-exports", "-exports",
+	"-no-sparse", "-no-tailends", "-tailends", "-no-fragments",
 	"-no-duplicates", "-no-hardlinks", "-keep-as-directory", "", "", "",
-	"-p", "-pd", "-pd", "-pf", "-sort", "-ef", "-wildcards", "-regex",
-	"-max-depth", "-one-file-system", "-one-file-system-x", "", "", "",
+	/* time options */
+	"-mkfs-time", "-all-time", "-root-time", "", "", "",
+	/* permissions options */
+	"-all-root", "-root-mode", "-root-uid", "-root-gid", "-force-file-mode",
+	"-force-dir-mode", "-force-uid", "-force-gid", "-uid-gid-offset", "",
+	"", "",
+	/* pseudo options */
+	"-p", "-pd", "-pd", "-pf", "-pseudo-override", "", "", "",
+	/* filter options */
+	"-sort", "-ef", "-wildcards", "-regex", "-max-depth", "-one-file-system",
+	"-one-file-system-x", "", "", "",
+	/* xattrs options */
 	"-no-xattrs", "-xattrs", "-xattrs-exclude", "-xattrs-include",
-	"-xattrs-add", "", "", "", "-version", "-exit-on-error", "-quiet",
-	"-info", "-info-file", "-no-progress", "-progress", "-percentage",
-	"-throttle", "-limit", "-processors", "-mem", "-mem-percent",
-	"-mem-default", "", "", "", "-noappend", "-root-becomes",
-	"-no-recovery", "-recovery-path", "-recover", "", "", "", "-action",
-	"-log-action", "-true-action", "-false-action", "-action-file",
-	"-log-action-file", "-true-action-file", "-false-action-file", "", "",
-	"", "-default-mode", "-default-uid", "-default-gid", "-ignore-zeros",
-	"", "", "", "-nopad", "-offset", "-o", "", "", "", "-help",
-	"-help-option", "-help-section", "-help-comp", "-help-all", "-Xhelp",
-	"-h", "-ho", "-hs", "-ha", "", "", "", "-fstime",
-	"-always-use-fragments", "-root-owned", "-noInodeCompression",
-	"-noIdTableCompression", "-noDataCompression", "-noFragmentCompression",
-	 "-noXattrCompression", "-pseudo-dir", NULL,
+	"-xattrs-add", "", "", "",
+	/* runtime options */
+	"-version", "-exit-on-error", "-quiet", "-info", "-info-file",
+	"-no-progress", "-progress", "-percentage", "-throttle", "-limit",
+	"-processors", "-mem", "-mem-percent", "-mem-default",
+	"-single-reader", "-small-readers", "-block-readers", "", "", "",
+	/* append options */
+	"-noappend", "-root-becomes", "-no-recovery", "-recovery-path",
+	"-recover", "", "", "",
+	/* actions options */
+	"-action", "-log-action", "-true-action", "-false-action",
+	"-action-file", "-log-action-file", "-true-action-file",
+	"-false-action-file", "", "", "",
+	/* tar options */
+	"-default-mode", "-default-uid", "-default-gid", "-ignore-zeros", "",
+	"", "",
+	/* expert options */
+	"-nopad", "-offset", "-o", "", "", "",
+	/* help options */
+	"-help", "-help-option", "-help-section", "-help-comp", "-help-all",
+	"-Xhelp", "-h", "-ho", "-hs", "-ha", "", "", "",
+	/* misc options */
+	"-fstime", "-always-use-fragments", "-root-owned",
+	"-noInodeCompression", "-noIdTableCompression", "-noDataCompression",
+	"-noFragmentCompression", "-noXattrCompression", "-pseudo-dir", NULL,
 };
 
 static char *sqfstar_options[]={
+	/* compression options */
 	"", "", "-b", "-comp", "-noI", "-noId", "-noD", "-noF", "-noX",
-	"-no-compression", "", "", "", "-reproducible", "-not-reproducible",
-	"-mkfs-time", "-all-time", "-root-time", "-root-mode", "-root-uid",
-	"-root-gid", "-all-root", "-force-file-mode", "-force-dir-mode",
-	"-force-uid", "-force-gid", "-uid-gid-offset", "-default-mode", "-default-uid",
-	"-default-gid", "-pseudo-override", "-exports", "-no-sparse",
-	"-no-fragments", "-no-tailends", "-no-duplicates", "-no-hardlinks", "",
-	"", "", "-p", "-pd", "-pd", "-pf", "-ef", "-regex", "-ignore-zeros",
-	"", "", "", "-no-xattrs", "-xattrs", "-xattrs-exclude",
-	"-xattrs-include", "-xattrs-add", "", "","", "-version", "-force",
-	"-exit-on-error", "-quiet", "-info", "-info-file", "-no-progress",
-	"-progress", "-percentage", "-throttle", "-limit", "-processors",
-	"-mem", "-mem-percent", "-mem-default", "", "", "", "-nopad", "-offset",
-	 "-o", "", "", "", "-help", "help-option", "-help-section",
-	"-help-comp", "-help-all", "-Xhelp", "-h", "-ho", "-hs", "-ha", "", "",
-	"", "-fstime", "-root-owned", "-noInodeCompression",
+	"-no-compression", "", "", "",
+	/* build options */
+	"-reproducible", "-not-reproducible", "-exports", "-no-sparse",
+	"-no-fragments", "-no-tailends", "-no-duplicates", "-no-hardlinks",
+	"-regex", "-ignore-zeros", "-ef", "", "", "",
+	/* time options */
+	"-mkfs-time", "-all-time", "-root-time", "", "", "",
+	/* permissions options */
+	"-all-root", "-root-mode", "-root-uid", "-root-gid", "-force-file-mode",
+	"-force-dir-mode", "-force-uid", "-force-gid", "-uid-gid-offset",
+	"-default-mode", "-default-uid", "-default-gid", "", "", "",
+	/* pseudo options */
+	"-p", "-pd", "-pd", "-pf", "-pseudo-override", "", "", "",
+	/* xattr options */
+	"-no-xattrs", "-xattrs", "-xattrs-exclude", "-xattrs-include",
+	"-xattrs-add", "", "","",
+	/* runtime options */
+	"-version", "-force", "-exit-on-error", "-quiet", "-info", "-info-file",
+	"-no-progress", "-progress", "-percentage", "-throttle", "-limit",
+	"-processors", "-mem", "-mem-percent", "-mem-default", "", "", "",
+	/* expert options */
+	"-nopad", "-offset", "-o", "", "", "",
+	 /* help options */
+	 "-help", "help-option", "-help-section", "-help-comp", "-help-all",
+	 "-Xhelp", "-h", "-ho", "-hs", "-ha", "", "", "",
+	/* misc options */
+	"-fstime", "-root-owned", "-noInodeCompression",
 	"-noIdTableCompression", "-noDataCompression", "-noFragmentCompression",
 	 "-noXattrCompression", NULL
 };
 
 static char *mksquashfs_args[]={
+	/* compression options */
 	"", "", "<block-size>", "<comp>", "", "", "", "", "", "", "", "", "",
-	"", "", "", "", "", "", "", "<time>", "<time>", "<time>", "<mode>",
-	"<value>", "<value>", "", "<mode>", "<mode>", "<value>", "<value>", "<value>", "",
-	"", "", "", "", "", "", "", "", "", "", "", "", "", "<d mode uid gid>",
-	"<D time mode uid gid>", "<pseudo-file>", "<sort-file>",
-	"<exclude-file>", "", "", "<levels>", "", "", "", "", "", "", "",
-	"<regex>", "<regex>", "<name=val>", "", "", "", "", "", "", "",
-	"<file>", "", "", "", "<percentage>", "<percentage>", "<number>",
-	"<size>", "<percent>", "", "", "", "", "", "<name>", "", "<name>",
-	"<name>", "", "", "", "<action@expression>", "<action@expression>",
-	"<action@expression>", "<action@expression>", "<file>", "<file>",
-	"<file>", "<file>", "", "", "", "<mode>", "<value>", "<value>", "", "",
-	"", "", "", "<offset>", "<offset>", "", "", "", "", "<regex>",
-	"<section>", "<comp>", "", "", "", "<regex>", "<section>", "", "", "",
-	"", "<time>", "", "", "", "", "", "", "", ""
+	/* build options */
+	"", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "","",
+	"",
+	/* time options */
+	"<time>", "<time>", "<time>", "", "", "",
+	/* permissions options */
+	"", "<mode>", "<user>", "<group>", "<mode>", "<mode>", "<user>",
+	"<group>", "<value>", "", "", "",
+	/* pseudo options */
+	"<pseudo-definition>", "<d mode uid gid>", "<D time mode uid gid>",
+	"<pseudo-file>", "", "", "", "",
+	/* filter options */
+	"<sort-file>", "<exclude-file>", "", "", "<levels>", "", "", "", "", "",
+	/* xattrs options */
+	"", "", "<regex>", "<regex>", "<name=val>", "", "", "",
+	/* runtime options */
+	"", "", "", "", "<file>", "", "", "", "<percentage>", "<percentage>",
+	"<number>", "<size>", "<percent>", "", "", "<n>", "<n>", "", "", "",
+	/* append options **/
+	"", "<name>", "", "<name>", "<name>", "", "", "",
+	/* actions options */
+	"<action@expression>", "<action@expression>", "<action@expression>",
+	"<action@expression>", "<file>", "<file>", "<file>", "<file>", "", "",
+	"",
+	/* tar options */
+	"<mode>", "<value>", "<value>", "", "", "", "",
+	/* expert options */
+	"", "<offset>", "<offset>", "", "", "",
+	/* help options */
+	"", "<regex>", "<section>", "<comp>", "", "", "", "<regex>",
+	"<section>", "", "", "", "",
+	/* misc options */
+	"<time>", "", "", "", "", "", "", "", ""
 };
 
 static char *sqfstar_args[]={
+	/* compression */
 	"", "", "<block-size>", "<comp>",  "", "", "", "", "", "", "", "", "",
-	"", "", "<time>", "<time>", "<time>", "<mode>", "<value>", "<value>",
-	"", "<mode>", "<mode>", "<value>", "<value>", "<value>", "<mode>", "<value>",
-	"<value>", "", "", "", "", "", "", "", "", "", "",
+	/* build options */
+	"", "", "", "", "", "", "", "", "", "", "<exclude-file>", "", "", "",
+	/* time options */
+	"<time>", "<time>", "<time>", "", "", "",
+	/* permissions options */
+	"", "<mode>", "<yser>", "<group>", "<mode>", "<mode>", "<user>",
+	"<group>", "<value>", "<mode>", "<user>", "<roup>", "", "", "",
+	/* pseudo options */
 	"<pseudo-definition>", "<d mode uid gid>", "<D time mode u g>",
-	"<pseudo-file>", "<exclude-file>", "", "", "", "", "", "", "",
-	"<regex>", "<regex>", "<name=val>", "", "","", "", "", "", "", "",
-	"<file>", "", "", "", "<percentage>", "<percentage>", "<number>",
-	"<size>", "<percent>", "", "", "", "", "", "<offset>", "<offset>", "",
-	"", "", "", "<regex>", "<section>", "<comp>", "", "", "", "<regex>",
-	"<section>", "" "", "", "", "<time>", "", "", "", "", "", "", ""
+	"<pseudo-file>", "", "", "", "",
+	/* xattr options */
+	"", "", "<regex>", "<regex>", "<name=val>", "", "","",
+	/* runtime options */
+	"", "", "", "", "", "<file>", "", "", "", "<percentage>",
+	"<percentage>", "<number>", "<size>", "<percent>", "", "", "", "",
+	/* expert options */
+	"", "<offset>", "<offset>", "", "", "",
+	/* help options */
+	"", "<regex>", "<section>", "<comp>", "", "", "", "<regex>",
+	"<section>", "" "", "", "",
+	/* misc options */
+	"<time>", "", "", "", "", "", "", ""
 };
 
 static char *mksquashfs_sections[]={
-	"compression", "build", "filter", "xattrs", "runtime", "append",
-	"actions", "tar", "expert", "help", "misc", "pseudo", "symbolic",
-	"environment", "exit", "extra", NULL
+	"compression", "build", "time", "perms", "pseudo", "filter", "xattrs",
+	"runtime", "append", "actions", "tar", "expert", "help", "misc",
+	"pseudo-defs", "symbolic", "environment", "exit", "extra", NULL
 };
 
 static char *sqfstar_sections[]={
-	"compression", "build", "filter", "xattrs", "runtime", "expert",
-	"help", "misc", "pseudo", "symbolic", "environment", "exit", "extra",
-	NULL
+	"compression", "build", "time", "perms", "pseudo", "xattrs", "runtime",
+	"expert", "help", "misc", "pseudo-defs", "symbolic", "environment",
+	"exit", "extra", NULL
 };
 
 static char *mksquashfs_text[]={
@@ -159,45 +227,6 @@ static char *mksquashfs_text[]={
 	"-reproducible\t\tbuild filesystems that are reproducible" REP_STR "\n",
 	"-not-reproducible\tbuild filesystems that are not reproducible"
 		NOREP_STR "\n",
-	"-mkfs-time <time>\tset filesystem creation timestamp to <time>. "
-		"<time> can be an unsigned 32-bit int indicating seconds since "
-		"the epoch (1970-01-01) or a string value which is passed to "
-		"the \"date\" command to parse. Any string value which the "
-		"date command recognises can be used such as \"now\", \"last "
-		"week\", or \"Wed Feb 15 21:02:39 GMT 2023\"\n",
-	"-all-time <time>\tset all file and directory timestamps to <time>. "
-		"<time> can be an unsigned 32-bit int indicating seconds since "
-		"the epoch (1970-01-01) or a string value which is passed to "
-		"the \"date\" command to parse. Any string value which the "
-		"date command recognises can be used such as \"now\", \"last "
-		"week\", or \"Wed Feb 15 21:02:39 GMT 2023\"\n",
-	"-root-time <time>\tset root directory time to <time>. <time> can be "
-		"an unsigned 32-bit int indicating seconds since the epoch "
-		"(1970-01-01) or a string value which is passed to the "
-		"\"date\" command to parse. Any string value which the date "
-		"command recognises can be used such as \"now\", \"last "
-		"week\", or \"Wed Feb 15 21:02:39 GMT 2023\"\n",
-	"-root-mode <mode>\tset root directory permissions to <mode>.  <Mode> "
-		"can be symbolic or octal (see section Symbolic mode "
-		"specification).  Default root mode is ugo=rwx or 0777 octal\n",
-	"-root-uid <value>\tset root directory owner to specified <value>, "
-		"<value> can be either an integer uid or user name\n",
-	"-root-gid <value>\tset root directory group to specified <value>, "
-		"<value> can be either an integer gid or group name\n",
-	"-all-root\t\tmake all files and directories owned by root\n",
-	"-force-file-mode <mode>\tset all file (non-directory) permissions "
-		"to <mode>.  <Mode> can be symbolic or octal (see section "
-		"Symbolic mode specification)\n",
-	"-force-dir-mode <mode>\tset all directory permissions to <mode>.  "
-		"<Mode> can be symbolic or octal (see section Symbolic mode "
-		"specification)\n",
-	"-force-uid <value>\tset all file and directory uids to specified "
-		"<value>, <value> can be either an integer uid or user name\n",
-	"-force-gid <value>\tset all file and directory gids to specified "
-		"<value>, <value> can be either an integer gid or group name\n",
-	"-uid-gid-offset <value>\toffset all uid and gids by specified <value>\n",
-	"-pseudo-override\tmake pseudo file uids and gids override -all-root, "
-		"-force-uid and -force-gid options\n",
 	"-no-exports\t\tdo not make filesystem exportable via NFS (-tar "
 		"default)\n",
 	"-exports\t\tmake filesystem exportable via NFS (default)\n",
@@ -210,10 +239,50 @@ static char *mksquashfs_text[]={
 	"-keep-as-directory\tif one source directory is specified, create a "
 		"root directory containing that directory, rather than the "
 		"contents of the directory\n",
-	"\n", "Filesystem filter options:", "\n",
+	"\n", "Filesystem time options:", "\n",
+	"-mkfs-time <time>\tset filesystem creation timestamp to <time>. "
+		"<time> can be an unsigned 32-bit int indicating seconds since "
+		"the epoch (1970-01-01) or a string value which is passed to "
+		"the \"date\" command to parse. Any string value which the "
+		"date command recognises can be used such as \"now\", \"last "
+		"week\", or \"Wed Feb 15 21:02:39 GMT 2025\"\n",
+	"-all-time <time>\tset all file and directory timestamps to <time>. "
+		"<time> can be an unsigned 32-bit int indicating seconds since "
+		"the epoch (1970-01-01) or a string value which is passed to "
+		"the \"date\" command to parse. Any string value which the "
+		"date command recognises can be used such as \"now\", \"last "
+		"week\", or \"Wed Feb 15 21:02:39 GMT 2025\"\n",
+	"-root-time <time>\tset root directory time to <time>. <time> can be "
+		"an unsigned 32-bit int indicating seconds since the epoch "
+		"(1970-01-01) or a string value which is passed to the "
+		"\"date\" command to parse. Any string value which the date "
+		"command recognises can be used such as \"now\", \"last "
+		"week\", or \"Wed Feb 15 21:02:39 GMT 2025\"\n",
+	"\n", "Filesystem permissions options:", "\n",
+	"-all-root\t\tmake all files and directories owned by root\n",
+	"-root-mode <mode>\tset root directory permissions to <mode>.  <Mode> "
+		"can be symbolic or octal (see section Symbolic mode "
+		"specification).  Default root mode is ugo=rwx or 0777 octal\n",
+	"-root-uid <user>\tset root directory owner to specified <user>, "
+		"<user> can be either an integer uid or user name\n",
+	"-root-gid <group>\tset root directory group to specified <group>, "
+		"<group> can be either an integer gid or group name\n",
+	"-force-file-mode <mode>\tset all file (non-directory) permissions "
+		"to <mode>.  <Mode> can be symbolic or octal (see section "
+		"Symbolic mode specification)\n",
+	"-force-dir-mode <mode>\tset all directory permissions to <mode>.  "
+		"<Mode> can be symbolic or octal (see section Symbolic mode "
+		"specification)\n",
+	"-force-uid <user>\tset all file and directory uids to specified "
+		"<user>, <user> can be either an integer uid or user name\n",
+	"-force-gid <group>\tset all file and directory gids to specified "
+		"<group>, <group> can be either an integer gid or group name\n",
+	"-uid-gid-offset <value>\toffset all uid and gids by specified "
+		"<value>.  <value> should be a positive integer\n",
+	"\n", "Filesystem pseudo options:", "\n",
 	"-p <pseudo-definition>\tadd pseudo file definition.  The definition "
 		"should be quoted.  See section \"Pseudo file definition "
-		"format\" later for format details\n",
+		"format\" for format details\n",
 	"-pd <d mode uid gid>\tspecify a default pseudo directory which will "
 		"be used in pseudo definitions if a directory in the pathname "
 		"does not exist.  This also allows pseudo definitions to be "
@@ -226,6 +295,9 @@ static char *mksquashfs_text[]={
 	"-pf <pseudo-file>\tadd list of pseudo file definitions from "
 		"<pseudo-file>, use - for stdin.  Pseudo file definitions "
 		"should not be quoted\n",
+	"-pseudo-override\tmake pseudo file uids and gids override -all-root, "
+		"-force-uid and -force-gid options\n",
+	"\n", "Filesystem filter options:", "\n",
 	"-sort <sort-file>\tsort files according to priorities in <sort-file>."
 		"  One file or dir with priority per line.  Priority -32768 "
 		"to 32767, default priority 0\n",
@@ -292,6 +364,12 @@ static char *mksquashfs_text[]={
 	"-mem-percent <percent>\tuse <percent> physical memory for caches.  "
 		"Default 25%\n",
 	"-mem-default\t\tprint default memory usage in Mbytes\n",
+	"-single-reader\t\tuse a single thread to read files. This "
+		"reads files sequentially from the source(s)" SINGLE_STR "\n",
+	"-small-readers <n>\tuse <n> threads to read small files (files "
+		"less than a block size) in parallel from the source(s)" SMALL_STR "\n",
+	"-block-readers <n>\tuse <n> threads to read block files (files "
+		"a block or larger in size) in parallel from the source(s)" BLOCK_STR" \n",
 	"\n", "Filesystem append options:", "\n",
 	"-noappend\t\tdo not append to existing filesystem\n",
 	"-root-becomes <name>\twhen appending source files/directories, make "
@@ -306,11 +384,11 @@ static char *mksquashfs_text[]={
 	"\n", "Filesystem actions options:", "\n",
 	"-action <action@expr>\tevaluate <expr> on every file and directory, "
 		"and execute <action> if it returns TRUE\n",
-	"-log-action <act@expr>\tas above, but log expression evaluation "
+	"-log-action <act@expr>\tas -action, but log expression evaluation "
 		"results and actions performed\n",
-	"-true-action <act@expr>\tas above, but only log expressions which "
+	"-true-action <act@expr>\tas -action, but only log expressions which "
 		"return TRUE\n",
-	"-false-action <act@exp>\tas above, but only log expressions which "
+	"-false-action <act@exp>\tas -action, but only log expressions which "
 		"return FALSE\n",
 	"-action-file <file>\tas action, but read actions from <file>\n",
 	"-log-action-file <file>\tas -log-action, but read actions from "
@@ -349,12 +427,14 @@ static char *mksquashfs_text[]={
 	"-o <offset>\t\tsynonym for -offset\n",
 	"\n", "Help options:", "\n",
 	"-help\t\t\tprint help summary information to stdout\n",
-	"-help-option <regex>\tprint the help information for Mksquashfs "
-		"options matching <regex> to stdout\n",
+	"-help-option <regex>\tprint the help information for options matching "
+		"<regex> to pager (or stdout if not a terminal)\n",
 	"-help-section <section>\tprint the help information for section "
-		"<section> to pager (or stdout if not a terminal).  Use "
-		"\"sections\" or \"h\" as section name to get a list of "
-		"sections and their names\n",
+		"<section> to pager (or stdout if not a terminal).  If "
+		"<section> does not exactly match a section name, it is "
+		"treated as a regular expression, and all section names that "
+		"match are displayed.  Use \"sections\" or \"h\" as section "
+		"name to get a list of sections and their names\n",
 	"-help-comp <comp>\tprint compressor options for compressor <comp>.  "
 		"Use <all> to get compressor options for all the compressors\n",
 	"-help-all\t\tprint help information for all Mksquashfs options and "
@@ -429,9 +509,9 @@ static char *mksquashfs_text[]={
 	"SQFS_CMDLINE \t\tIf set, this is used as the directory to write the "
 		"file sqfs_cmdline which contains the command line arguments "
 		"given to Mksquashfs.  Each command line argument is wrapped "
-	       "in quotes to ensure there is no ambiguity when arguments "
-	       "contain spaces.  If the file already exists the command "
-	       "line is appended to the file\n", "\n",
+		"in quotes to ensure there is no ambiguity when arguments "
+		"contain spaces.  If the file already exists then the command "
+		"line is appended to the file\n", "\n",
 	"SOURCE_DATE_EPOCH\tIf set, this is used as the filesystem creation "
 		"timestamp.  Also any file timestamps which are after "
 		"SOURCE_DATE_EPOCH will be clamped to SOURCE_DATE_EPOCH.  "
@@ -478,6 +558,21 @@ static char *sqfstar_text[]={
 		"\n",
 	"-not-reproducible\tbuild filesystems that are not reproducible"
 		NOREP_STR "\n",
+	"-exports\t\tmake the filesystem exportable via NFS\n",
+	"-no-sparse\t\tdo not detect sparse files\n",
+	"-no-fragments\t\tdo not use fragments\n",
+	"-no-tailends\t\tdo not pack tail ends into fragments\n",
+	"-no-duplicates\t\tdo not perform duplicate checking\n",
+	"-no-hardlinks\t\tdo not hardlink files, instead store duplicates\n",
+	"-regex\t\t\tallow POSIX regular expressions to be used in exclude "
+		"dirs/files\n",
+	"-ignore-zeros\t\tallow tar files to be concatenated together and fed "
+		"to Sqfstar.  Normally a tarfile has two consecutive 512 byte "
+		"blocks filled with zeros which means EOF and Sqfstar will "
+		"stop reading after the first tar file on encountering them. "
+		"This option makes Sqfstar ignore the zero filled blocks\n",
+	"-ef <exclude-file>\tlist of exclude dirs/files.  One per line\n",
+	"\n", "Filesystem time options:", "\n",
 	"-mkfs-time <time>\tset filesystem creation timestamp to <time>. "
 		"<time> can be an unsigned 32-bit int indicating seconds since "
 		"the epoch (1970-01-01) or a string value which is passed to "
@@ -496,53 +591,47 @@ static char *sqfstar_text[]={
 		"\"date\" command to parse. Any string value which the date "
 		"command recognises can be used such as \"now\", \"last "
 		"week\", or \"Wed Feb 15 21:02:39 GMT 2023\"\n",
+	"\n", "Filesystem permissions options:", "\n",
+	"-all-root\t\tmake all files and directories owned by root\n",
 	"-root-mode <mode>\tset root directory permissions to <mode>.  <Mode> "
 		"can be symbolic or octal (see section Symbolic mode "
 		"specification).  Default root mode is ugo=rwx or 0777 octal\n",
-	"-root-uid <value>\tset root directory owner to specified <value>, "
-		"<value> can be either an integer uid or user name\n",
-	"-root-gid <value>\tset root directory group to specified <value>, "
-		"<value> can be either an integer gid or group name\n",
-	"-all-root\t\tmake all files and directories owned by root\n",
+	"-root-uid <user>\tset root directory owner to specified <user>, "
+		"<user> can be either an integer uid or user name\n",
+	"-root-gid <group>\tset root directory group to specified <group>, "
+		"<group> can be either an integer gid or group name\n",
 	"-force-file-mode <mode>\tset all file (non-directory) permissions "
 		"to <mode>.  <Mode> can be symbolic or octal (see section "
 		"Symbolic mode specification)\n",
 	"-force-dir-mode <mode>\tset all directory permissions to <mode>.  "
 		"<Mode> can be symbolic or octal (see section Symbolic mode "
 		"specification)\n",
-	"-force-uid <value>\tset all file and directory uids to specified "
-		"<value>, <value> can be either an integer uid or user name\n",
-	"-force-gid <value>\tset all file and directory gids to specified "
-		"<value>, <value> can be either an integer gid or group name\n",
-	"-uid-gid-offset <value>\toffset all uid and gids by specified <value>\n",
+	"-force-uid <user>\tset all file and directory uids to specified "
+		"<user>, <user> can be either an integer uid or user name\n",
+	"-force-gid <group>\tset all file and directory gids to specified "
+		"<group>, <group> can be either an integer gid or group name\n",
+	"-uid-gid-offset <value>\toffset all uid and gids by specified "
+		"<value>.  <value> should be a positive integer\n",
 	"-default-mode <mode>\ttar files often do not store permissions for "
 		"intermediate directories.  This option sets the default "
 		"directory permissions to <mode>.  <Mode> can be symbolic or "
 		"octal (see section Symbolic mode specification).  Default "
 		"mode is u=rwx,go=rx or 0755 octal.  This also sets the root "
 		"directory mode\n",
-	"-default-uid <value>\ttar files often do not store uids for "
+	"-default-uid <user>\ttar files often do not store uids for "
 		"intermediate directories.  This option sets the default "
-		"directory owner to <value>, rather than the user running "
-		"Sqfstar.  <value> can be either an integer uid or user name.  "
+		"directory owner to <user>, rather than the user running "
+		"Sqfstar.  <user> can be either an integer uid or user name.  "
 		"This also sets the root directory uid\n",
-	"-default-gid <value>\ttar files often do not store gids for "
+	"-default-gid <group>\ttar files often do not store gids for "
 		"intermediate directories.  This option sets the default "
-		"directory group to <value>, rather than the group of the "
-		"user running Sqfstar.  <value> can be either an integer uid "
+		"directory group to <group>, rather than the group of the "
+		"user running Sqfstar.  <group> can be either an integer gid "
 		"or group name.  This also sets the root directory gid\n",
-	"-pseudo-override\tmake pseudo file uids and gids override -all-root, "
-		"-force-uid and -force-gid options\n",
-	"-exports\t\tmake the filesystem exportable via NFS\n",
-	"-no-sparse\t\tdo not detect sparse files\n",
-	"-no-fragments\t\tdo not use fragments\n",
-	"-no-tailends\t\tdo not pack tail ends into fragments\n",
-	"-no-duplicates\t\tdo not perform duplicate checking\n",
-	"-no-hardlinks\t\tdo not hardlink files, instead store duplicates\n",
-	"\n", "Filesystem filter options:", "\n",
+	"\n", "Filesystem pseudo options:", "\n",
 	"-p <pseudo-definition>\tadd pseudo file definition.  The definition "
 		"should be quoted.  See section \"Pseudo file definition "
-		"format\" later for format details\n",
+		"format\" for format details\n",
 	"-pd <d mode uid gid>\tspecify a default pseudo directory which will "
 		"be used in pseudo definitions if a directory in the pathname "
 		"does not exist.  This also allows pseudo definitions to be "
@@ -554,14 +643,8 @@ static char *sqfstar_text[]={
 		"specified in addition to mode, uid and gid\n",
 	"-pf <pseudo-file>\tadd list of pseudo file definitions.  Pseudo file "
 		"definitions in pseudo-files should not be quoted\n",
-	"-ef <exclude-file>\tlist of exclude dirs/files.  One per line\n",
-	"-regex\t\t\tallow POSIX regular expressions to be used in exclude "
-		"dirs/files\n",
-	"-ignore-zeros\t\tallow tar files to be concatenated together and fed "
-		"to Sqfstar.  Normally a tarfile has two consecutive 512 byte "
-		"blocks filled with zeros which means EOF and Sqfstar will "
-		"stop reading after the first tar file on encountering them. "
-		"This option makes Sqfstar ignore the zero filled blocks\n",
+	"-pseudo-override\tmake pseudo file uids and gids override -all-root, "
+		"-force-uid and -force-gid options\n",
 	"\n", "Filesystem extended attribute (xattrs) options:", "\n",
 	"-no-xattrs\t\tdo not store extended attributes" NOXOPT_STR "\n",
 	"-xattrs\t\t\tstore extended attributes" XOPT_STR "\n",
@@ -620,12 +703,14 @@ static char *sqfstar_text[]={
 	"-o <offset>\t\tsynonym for -offset\n",
 	"\n", "Help options:", "\n",
 	"-help\t\t\tprint help summary information to stdout\n",
-	"-help-option <regex>\tprint the help information for Sqfstar "
-		"options matching <regex> to stdout\n",
+	"-help-option <regex>\tprint the help information for options matching "
+		"<regex> to pager (or stdout if not a terminal)\n",
 	"-help-section <section>\tprint the help information for section "
-		"<section> to pager (or stdout if not a terminal).  Use "
-		"\"sections\" or \"h\" as section name to get a list of "
-		"sections and their names\n",
+		"<section> to pager (or stdout if not a terminal).  If "
+		"<section> does not exactly match a section name, it is "
+		"treated as a regular expression, and all section names that "
+		"match are displayed.  Use \"sections\" or \"h\" as section "
+		"name to get a list of sections and their names\n",
 	"-help-comp <comp>\tprint compressor options for compressor <comp>.  "
 		"Use <all> to get compressor options for all the compressors\n",
 	"-help-all\t\tprint help information for all Sqfstar options and "
@@ -698,9 +783,9 @@ static char *sqfstar_text[]={
 	"SQFS_CMDLINE \t\tIf set, this is used as the directory to write the "
 		"file sqfs_cmdline which contains the command line arguments "
 		"given to Sqfstar.  Each command line argument is wrapped "
-	       "in quotes to ensure there is no ambiguity when arguments "
-	       "contain spaces.  If the file already exists the command "
-	       "line is appended to the file\n", "\n",
+		"in quotes to ensure there is no ambiguity when arguments "
+		"contain spaces.  If the file already exists then the command "
+		"line is appended to the file\n", "\n",
 	"SOURCE_DATE_EPOCH\tIf set, this is used as the filesystem creation "
 		"timestamp.  Also any file timestamps which are after "
 		"SOURCE_DATE_EPOCH will be clamped to SOURCE_DATE_EPOCH.  "
@@ -724,16 +809,13 @@ static char *sqfstar_text[]={
 
 static void print_help_all(char *name, char *syntax, char **options_text)
 {
-	int i, cols, tty = isatty(STDOUT_FILENO);
+	int i, cols;
 	pid_t pager_pid;
 	FILE *pager;
 
-	if(tty) {
+	if(isatty(STDOUT_FILENO)) {
 		cols = get_column_width();
-
 		pager = exec_pager(&pager_pid);
-		if(pager == NULL)
-			exit(1);
 	} else {
 		cols = 80;
 		pager = stdout;
@@ -746,7 +828,7 @@ static void print_help_all(char *name, char *syntax, char **options_text)
 
 	display_compressor_usage(pager, COMP_DEFAULT, cols);
 
-	if(tty) {
+	if(pager != stdout) {
 		fclose(pager);
 		wait_to_die(pager_pid);
 	}
@@ -759,14 +841,12 @@ static void print_option(char *prog_name, char *opt_name, char *pattern, char **
 					char **options_args, char **options_text)
 {
 	int i, res, matched = FALSE;
-	regex_t *preg = malloc(sizeof(regex_t));
+	regex_t *preg = MALLOC(sizeof(regex_t));
 	int cols = get_column_width();
-
-	if(preg == NULL)
-		MEM_ERROR();
+	pid_t pager_pid;
+	FILE *pager;
 
 	res = regcomp(preg, pattern, REG_EXTENDED|REG_NOSUB);
-
 	if(res) {
 		char str[1024]; /* overflow safe */
 
@@ -775,15 +855,26 @@ static void print_option(char *prog_name, char *opt_name, char *pattern, char **
 		exit(1);
 	}
 
+	if(isatty(STDOUT_FILENO))
+		pager = exec_pager(&pager_pid);
+	else
+		pager = stdout;
+
 	for(i = 0; options[i] != NULL; i++) {
 		res = regexec(preg, options[i], (size_t) 0, NULL, 0);
 		if(res)
 			res = regexec(preg, options_args[i], (size_t) 0, NULL, 0);
 		if(!res) {
 			matched = TRUE;
-			autowrap_print(stdout, options_text[i], cols);
+			autowrap_print(pager, options_text[i], cols);
 		}
 	}
+
+	if(pager != stdout) {
+		fclose(pager);
+		wait_to_die(pager_pid);
+	}
+
 
 	if(!matched) {
 		autowrap_printf(stderr, cols, "%s: %s %s does not match any %s option\n", prog_name, opt_name, pattern, prog_name);
@@ -817,16 +908,14 @@ static void print_section_names(FILE *out, char *string, int cols, char **sectio
 
 static void print_section(char *prog_name, char *opt_name, char *sec_name, char **sections, char **options_text)
 {
-	int i, j, secs, cols, tty = isatty(STDOUT_FILENO);
+	int i, j, secs, cols, res, matched = FALSE;
 	pid_t pager_pid;
 	FILE *pager;
+	regex_t *preg;
 
-	if(tty) {
+	if(isatty(STDOUT_FILENO)) {
 		cols = get_column_width();
-
 		pager = exec_pager(&pager_pid);
-		if(pager == NULL)
-			exit(1);
 	} else {
 		cols = 80;
 		pager = stdout;
@@ -840,14 +929,44 @@ static void print_section(char *prog_name, char *opt_name, char *sec_name, char 
 
 	for(i = 0; sections[i] != NULL; i++)
 		if(strcmp(sections[i], sec_name) == 0)
-			break;
+			goto exact_match;
 
-	if(sections[i] == NULL) {
-		autowrap_printf(pager, cols, "%s: %s %s does not match any section name\n", prog_name, opt_name, sec_name);
-		print_section_names(pager, "", cols, sections, options_text);
-		goto finish;
+	/* match sec_name as a regex */
+	preg = MALLOC(sizeof(regex_t));
+	res = regcomp(preg, sec_name, REG_EXTENDED|REG_NOSUB);
+	if(res) {
+		char str[1024]; /* overflow safe */
+
+		if(pager != stdout) {
+			fclose(pager);
+			wait_to_die(pager_pid);
+		}
+
+		regerror(res, preg, str, 1024);
+		autowrap_printf(stderr, cols, "%s: %s invalid regex %s because %s\n", prog_name, opt_name, sec_name, str);
+		exit(1);
 	}
 
+	for(i = j = 0; sections[i] != NULL; i++) {
+		res = regexec(preg, sections[i], (size_t) 0, NULL, 0);
+		if(!res) {
+			autowrap_print(pager, options_text[j], cols);
+			matched = TRUE;
+		}
+
+		while(options_text[++ j] != NULL && !is_header(j, options_text))
+			if(!res)
+				autowrap_print(pager, options_text[j], cols);
+	}
+
+	if(!matched) {
+		autowrap_printf(pager, cols, "%s: %s %s does not match any section name\n", prog_name, opt_name, sec_name);
+		print_section_names(pager, "", cols, sections, options_text);
+	}
+
+	goto finish;
+
+exact_match:
 	i++;
 
 	for(j = 0, secs = 0; options_text[j] != NULL && secs <= i; j ++) {
@@ -858,7 +977,7 @@ static void print_section(char *prog_name, char *opt_name, char *sec_name, char 
 	}
 
 finish:
-	if(tty) {
+	if(pager != stdout) {
 		fclose(pager);
 		wait_to_die(pager_pid);
 	}
@@ -869,40 +988,93 @@ finish:
 
 static void handle_invalid_option(char *prog_name, char *opt_name, char **sections, char **options_text)
 {
-	int cols = get_column_width();
+	int cols;
+	pid_t pager_pid;
+	FILE *pager;
 
-	autowrap_printf(stderr, cols, "%s: %s is an invalid option\n\n", prog_name, opt_name);
-	autowrap_printf(stderr, cols, "Run\n  \"%s -help-option <regex>\" to get help on all options matching <regex>\n", prog_name);
-	fprintf(stderr, "\nOr run\n  \"%s -help-section <section-name>\" to get help on these sections\n", prog_name);
-	print_section_names(stderr, "\t", cols, sections, options_text);
-	autowrap_printf(stderr, cols, "\nOr run\n  \"%s -help-all\" to get help on all the sections\n", prog_name);
+	if(isatty(STDOUT_FILENO)) {
+		cols = get_column_width();
+		pager = exec_pager(&pager_pid);
+	} else {
+		cols = 80;
+		pager = stdout;
+	}
+
+	autowrap_printf(pager, cols, "%s: %s is an invalid option\n\n", prog_name, opt_name);
+	autowrap_printf(pager, cols, "Run\n  \"%s -help-option <regex>\" to get help on all options matching <regex>\n", prog_name);
+	fprintf(pager, "\nOr run\n  \"%s -help-section <section-name>\" to get help on these sections\n", prog_name);
+	print_section_names(pager, "\t", cols, sections, options_text);
+	autowrap_printf(pager, cols, "\nOr run\n  \"%s -help-all\" to get help on all the sections\n", prog_name);
+
+	if(pager != stdout) {
+		fclose(pager);
+		wait_to_die(pager_pid);
+	}
+
 	exit(1);
 }
 
 
-static void print_help(char *prog_name, int error, char *syntax, char **sections, char **options_text)
+static void print_help(char *prog_name, char *message, char *syntax, char **sections, char **options_text)
 {
-	FILE *stream = error ? stderr : stdout;
-	int cols = get_column_width();
+	int cols;
+	pid_t pager_pid;
+	FILE *pager;
 
-	autowrap_printf(stream, cols, syntax, prog_name);
-	autowrap_printf(stream, cols, "Run\n  \"%s -help-option <regex>\" to get help on all options matching <regex>\n", prog_name);
-	autowrap_printf(stream, cols, "\nOr run\n  \"%s -help-section <section-name>\" to get help on these sections\n", prog_name);
-	print_section_names(stream, "\t", cols, sections, options_text);
-	autowrap_printf(stream, cols, "\nOr run\n  \"%s -help-all\" to get help on all the sections\n", prog_name);
-	exit(error);
+	if(isatty(STDOUT_FILENO)) {
+		cols = get_column_width();
+		pager = exec_pager(&pager_pid);
+	} else {
+		cols = 80;
+		pager = stdout;
+	}
+
+	if(message)
+		autowrap_print(pager, message, cols);
+	autowrap_printf(pager, cols, syntax, prog_name);
+	autowrap_printf(pager, cols, "Run\n  \"%s -help-option <regex>\" to get help on all options matching <regex>\n", prog_name);
+	autowrap_printf(pager, cols, "\nOr run\n  \"%s -help-section <section-name>\" to get help on these sections\n", prog_name);
+	print_section_names(pager, "\t", cols, sections, options_text);
+	autowrap_printf(pager, cols, "\nOr run\n  \"%s -help-all\" to get help on all the sections\n", prog_name);
+
+	if(pager != stdout) {
+		fclose(pager);
+		wait_to_die(pager_pid);
+	}
+
+	exit(message == NULL ? 0 : 1);
 }
 
 
-static void print_option_help(char *prog_name, char *option, char **sections, char **options_text)
+static void print_option_help(char *prog_name, char *option, char **sections, char **options_text, const char *restrict fmt, va_list ap)
 {
-	int cols = get_column_width();
+	int cols;
+	char *string;
+	pid_t pager_pid;
+	FILE *pager;
 
-	autowrap_printf(stderr, cols, "\nRun\n  \"%s -help-option %s$\" to get help on %s option\n", prog_name, option, option);
-	autowrap_printf(stderr, cols, "\nOr run\n  \"%s -help-option <regex>\" to get help on all options matching <regex>\n", prog_name);
-	autowrap_printf(stderr, cols, "\nOr run\n  \"%s -help-section <section-name>\" to get help on these sections\n", prog_name);
-	print_section_names(stderr, "\t", cols, sections, options_text);
-	autowrap_printf(stderr, cols, "\nOr run\n  \"%s -help-all\" to get help on all the sections\n", prog_name);
+	if(isatty(STDOUT_FILENO)) {
+		cols = get_column_width();
+		pager = exec_pager(&pager_pid);
+	} else {
+		cols = 80;
+		pager = stdout;
+	}
+
+	VASPRINTF(&string, fmt, ap);
+	autowrap_print(pager, string, cols);
+	autowrap_printf(pager, cols, "\nRun\n  \"%s -help-option %s$\" to get help on %s option\n", prog_name, option, option);
+	autowrap_printf(pager, cols, "\nOr run\n  \"%s -help-option <regex>\" to get help on all options matching <regex>\n", prog_name);
+	autowrap_printf(pager, cols, "\nOr run\n  \"%s -help-section <section-name>\" to get help on these sections\n", prog_name);
+	print_section_names(pager, "\t", cols, sections, options_text);
+	autowrap_printf(pager, cols, "\nOr run\n  \"%s -help-all\" to get help on all the sections\n", prog_name);
+	free(string);
+
+	if(pager != stdout) {
+		fclose(pager);
+		wait_to_die(pager_pid);
+	}
+
 	exit(1);
 }
 
@@ -940,14 +1112,14 @@ void sqfstar_section(char *opt_name, char *sec_name)
 	print_section("sqfstar", opt_name, sec_name, sqfstar_sections, sqfstar_text);
 }
 
-void mksquashfs_help(int error)
+void mksquashfs_help(char *message)
 {
-	print_help("mksquashfs", error, MKSQUASHFS_SYNTAX, mksquashfs_sections, mksquashfs_text);
+	print_help("mksquashfs", message, MKSQUASHFS_SYNTAX, mksquashfs_sections, mksquashfs_text);
 }
 
-void sqfstar_help(int error)
+void sqfstar_help(char *message)
 {
-	print_help("sqfstar", error, SQFSTAR_SYNTAX, sqfstar_sections, sqfstar_text);
+	print_help("sqfstar", message, SQFSTAR_SYNTAX, sqfstar_sections, sqfstar_text);
 }
 
 void mksquashfs_invalid_option(char *opt_name)
@@ -960,14 +1132,22 @@ void sqfstar_invalid_option(char *opt_name)
 	handle_invalid_option("sqfstar", opt_name, sqfstar_sections, sqfstar_text);
 }
 
-void mksquashfs_option_help(char *option)
+void mksquashfs_option_help(char *option, const char *restrict fmt, ...)
 {
-	print_option_help("mksquashfs", option, mksquashfs_sections, mksquashfs_text);
+	va_list ap;
+
+	va_start(ap, fmt);
+	print_option_help("mksquashfs", option, mksquashfs_sections, mksquashfs_text, fmt, ap);
+	va_end(ap);
 }
 
-void sqfstar_option_help(char *option)
+void sqfstar_option_help(char *option, const char *restrict fmt, ...)
 {
-	print_option_help("sqfstar", option, sqfstar_sections, sqfstar_text);
+	va_list ap;
+
+	va_start(ap, fmt);
+	print_option_help("sqfstar", option, sqfstar_sections, sqfstar_text, fmt, ap);
+	va_end(ap);
 }
 
 void display_compressors() {
@@ -978,7 +1158,7 @@ void display_compressors() {
 
 void print_compressor_options(char *comp_name, char *prog_name)
 {
-	int cols, tty;
+	int cols;
 	pid_t pager_pid;
 	FILE *pager;
 
@@ -995,14 +1175,9 @@ void print_compressor_options(char *comp_name, char *prog_name)
 		exit(1);
 	}
 
-	tty = isatty(STDOUT_FILENO);
-
-	if(tty) {
+	if(isatty(STDOUT_FILENO)) {
 		cols = get_column_width();
-
 		pager = exec_pager(&pager_pid);
-		if(pager == NULL)
-			exit(1);
 	} else {
 		cols = 80;
 		pager = stdout;
@@ -1010,7 +1185,7 @@ void print_compressor_options(char *comp_name, char *prog_name)
 
 	print_comp_options(pager, cols, comp_name, prog_name);
 
-	if(tty) {
+	if(pager != stdout) {
 		fclose(pager);
 		wait_to_die(pager_pid);
 	}

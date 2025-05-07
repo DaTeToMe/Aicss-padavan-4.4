@@ -1,7 +1,7 @@
 /*
  * Squashfs
  *
- * Copyright (c) 2024
+ * Copyright (c) 2024, 2025
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -34,11 +34,12 @@
 
 #include "error.h"
 #include "print_pager.h"
+#include "alloc.h"
 
 extern long long read_bytes(int, void *, long long);
 
-static char *pager_command = "/usr/bin/pager";
-static char *pager_name = "pager";
+static char *pager_command = NULL;
+static char *pager_name = NULL;
 static int pager_from_env_var = FALSE;
 
 static char *get_base(char *pathname)
@@ -124,25 +125,19 @@ failed:
 }
 
 
-static int determine_pager(void)
+static int determine_pager(char *name, char *path1, char *path2)
 {
 	int bytes, status, res, pipefd[2];
 	pid_t child;
 	char buffer[1024];
 
 	res = pipe(pipefd);
-	if(res == -1) {
-		ERROR("Error determining pager, pipe failed\n");
-		return UNKNOWN_PAGER;
-	}
+	if(res == -1)
+		BAD_ERROR("Error determining pager, pipe failed\n");
 
 	child = fork();
-	if(child == -1) {
-		ERROR("Error determining pager, fork failed\n");
-		close(pipefd[0]);
-		close(pipefd[1]);
-		return UNKNOWN_PAGER;
-	}
+	if(child == -1)
+		BAD_ERROR("Error determining pager, fork failed\n");
 
 	if(child == 0) { /* child */
 		close(pipefd[0]);
@@ -151,7 +146,9 @@ static int determine_pager(void)
 		if(res == -1)
 			exit(EXIT_FAILURE);
 
-		execlp(pager_command, pager_name, "--version", (char *) NULL);
+		execlp(path1, name, "--version", (char *) NULL);
+		if(path2)
+			execl(path2, name, "--version", (char *) NULL);
 		close(pipefd[1]);
 		exit(EXIT_FAILURE);
 	}
@@ -161,27 +158,18 @@ static int determine_pager(void)
 
 	bytes = read_bytes(pipefd[0], buffer, 1024);
 
-	if(bytes == -1) {
-		ERROR("Error determining pager\n");
-		close(pipefd[0]);
-		return UNKNOWN_PAGER;
-	}
+	if(bytes == -1)
+		BAD_ERROR("Error determining pager, read failed\n");
 
-	if(res == 1024) {
-		ERROR("Pager returned unexpectedly large amount of data for --version\n");
-		close(pipefd[0]);
-		return UNKNOWN_PAGER;
-	}
+	if(res == 1024)
+		BAD_ERROR("Pager (%s) returned unexpectedly large amount of data for --version\n", pager_command);
 
 	while(1) {
 		res = waitpid(child, &status, 0);
 		if(res != -1)
 			break;
-		else if(errno != EINTR) {
-			ERROR("Error determining pager, waitpid failed\n");
-			close(pipefd[0]);
-			return UNKNOWN_PAGER;
-		}
+		else if(errno != EINTR)
+			BAD_ERROR("Error determining pager, waitpid failed\n");
 	}
 
 	close(pipefd[0]);
@@ -220,25 +208,48 @@ void wait_to_die(pid_t process)
 }
 
 
+static void run_cmd(char *name, char *path1, char*path2, int no_arg)
+{
+	int pager = determine_pager(name, path1, path2);
+
+	if(pager == LESS_PAGER) {
+		execlp(path1, name, "--quit-if-one-screen", (char *) NULL);
+		if(path2)
+			execl(path2, name, "--quit-if-one-screen", (char *) NULL);
+	} else if(pager == MORE_PAGER) {
+		execlp(path1, name, "--exit-on-eof", (char *) NULL);
+		if(path2)
+			execl(path2, name, "--exit-on-eof", (char *) NULL);
+	} else if(no_arg) {
+		execlp(path1, name, (char *) NULL);
+		if(path2)
+			execl(path2, name, (char *) NULL);
+	}
+}
+
+
+void simple_cat()
+{
+	int c;
+
+	while((c = getchar()) != EOF)
+		putchar(c);
+}
+
+
 FILE *exec_pager(pid_t *process)
 {
 	FILE *file;
-	int res, pipefd[2], pager = determine_pager();
+	int res, pipefd[2];
 	pid_t child;
 
 	res = pipe(pipefd);
-	if(res == -1) {
-		ERROR("Error executing pager, pipe failed\n");
-		return NULL;
-	}
+	if(res == -1)
+		BAD_ERROR("Error executing pager, pipe failed\n");
 
 	child = fork();
-	if(child == -1) {
-		ERROR("Error executing pager, fork failed\n");
-		close(pipefd[0]);
-		close(pipefd[1]);
-		return NULL;
-	}
+	if(child == -1)
+		BAD_ERROR("Error executing pager, fork failed\n");
 
 	if(child == 0) { /* child */
 		close(pipefd[1]);
@@ -247,41 +258,34 @@ FILE *exec_pager(pid_t *process)
 		if(res == -1)
 			exit(EXIT_FAILURE);
 
-		if(pager == LESS_PAGER)
-			execlp(pager_command, pager_name, "--quit-if-one-screen", (char *) NULL);
-		else if(pager == MORE_PAGER)
-			execlp(pager_command, pager_name, "--exit-on-eof", (char *) NULL);
+		if(pager_from_env_var)
+			run_cmd(pager_name, pager_command, NULL, TRUE);
 		else
-			execlp(pager_command, pager_name,  (char *) NULL);
+			run_cmd("pager", "pager", "/usr/bin/pager", TRUE);
 
-		if(pager_from_env_var == FALSE) {
-			execl("/usr/bin/less", "less", "--quit-if-one-screen", (char *) NULL);
-			execl("/usr/bin/more", "more", "--exit-on-eof", (char *) NULL);
-			execl("/usr/bin/cat", "cat", (char *) NULL);
-		}
+		run_cmd("less", "less", "/usr/bin/less", FALSE);
+		run_cmd("more", "more", "/usr/bin/more", FALSE);
+		execlp("less", "less",  (char *) NULL);
+		execl("/usr/bin/less", "less", (char *) NULL);
+		execlp("more", "more",  (char *) NULL);
+		execl("/usr/bin/more", "more", (char *) NULL);
+		execlp("cat", "cat", (char *) NULL);
+		execl("/usr/bin/cat", "cat", (char *) NULL);
+		simple_cat();
 
 		close(pipefd[0]);
-		exit(EXIT_FAILURE);
+		exit(0);
 	}
 
 	/* parent */
 	close(pipefd[0]);
 
 	file = fdopen(pipefd[1], "w");
-	if(file == NULL) {
-		ERROR("Error executing pager, fdopen failed\n");
-		goto failed;
-	}
+	if(file == NULL)
+		BAD_ERROR("Error executing pager, fdopen failed\n");
 
 	*process = child;
 	return file;
-
-failed:
-	res = kill(child, SIGKILL);
-	if(res == -1)
-	ERROR("Error executing pager, kill failed\n");
-	close(pipefd[1]);
-	return NULL;
 }
 
 
@@ -357,16 +361,10 @@ void autowrap_printf(FILE *stream, int maxl, char *fmt, ...)
 {
 	va_list ap;
 	char *text;
-	int res;
 
 	va_start(ap, fmt);
-	res = vasprintf(&text, fmt, ap);
+	VASPRINTF(&text, fmt, ap);
 	va_end(ap);
-
-	if(res == -1) {
-		ERROR("Vasprintf failed in autowrap_printf\n");
-		exit(1);
-	}
 
 	autowrap_print(stream, text, maxl);
 	free(text);

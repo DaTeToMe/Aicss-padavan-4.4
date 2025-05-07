@@ -1,7 +1,7 @@
 /*
  * Squashfs
  *
- * Copyright (c) 2024
+ * Copyright (c) 2024, 2025
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -27,6 +27,7 @@
 
 #include "mksquashfs_error.h"
 #include "symbolic_mode.h"
+#include "alloc.h"
 
 int parse_octal_mode_args(char *source, char *cur_ptr, int args, char **argv,
 								void **data)
@@ -61,10 +62,7 @@ int parse_octal_mode_args(char *source, char *cur_ptr, int args, char **argv,
 		return 0; /* bad octal number arg */
 	}
 
-	mode_data = malloc(sizeof(struct mode_data));
-	if (mode_data == NULL)
-		MEM_ERROR();
-
+	mode_data = MALLOC(sizeof(struct mode_data));
 	mode_data->operation = SYMBOLIC_MODE_OCT;
 	mode_data->mode = mode;
 	mode_data->next = NULL;
@@ -194,10 +192,7 @@ parse_operation:
 		}
 	
 perms_parsed:
-		mode_data = malloc(sizeof(*mode_data));
-		if (mode_data == NULL)
-			MEM_ERROR();
-
+		mode_data = MALLOC(sizeof(*mode_data));
 		mode_data->operation = op;
 		mode_data->mode = mode;
 		mode_data->mask = mask;
@@ -249,20 +244,15 @@ int parse_mode_args(char *source, char *cur_ptr, int args, char **argv,
 int parse_mode(char *source, struct mode_data **data)
 {
 	int args = 0, res = 0;
-	char **argv = NULL, *cur_ptr = source, *first = source, **new;
+	char **argv = NULL, *cur_ptr = source, *first = source;
 
 	while(*cur_ptr != '\0') {
 		while(*cur_ptr != ',' && *cur_ptr != '\0')
 			cur_ptr ++;
 
 		if(cur_ptr != first) {
-			new = realloc(argv, (args + 1) * sizeof(char *));
-			if(new == NULL)
-				MEM_ERROR();
-
-			argv = new;
-
-			argv[args ++] = strndup(first, cur_ptr - first);
+			argv = REALLOC(argv, (args + 1) * sizeof(char *));
+			argv[args ++] = STRNDUP(first, cur_ptr - first);
 		}
 
 		if(*cur_ptr == ',')

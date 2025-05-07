@@ -1,7 +1,7 @@
 /*
  * Squashfs
  *
- * Copyright (c) 2021, 2022, 2024
+ * Copyright (c) 2021, 2022, 2023, 2024, 2025
  * Phillip Lougher <phillip@squashfs.org.uk>
  *
  * This program is free software; you can redistribute it and/or
@@ -43,6 +43,7 @@
 #include "symbolic_mode.h"
 #include "reader.h"
 #include "caches-queues-lists.h"
+#include "alloc.h"
 
 #define TRUE 1
 #define FALSE 0
@@ -123,11 +124,8 @@ static long long read_decimal(char *s, int maxsize, int *bytes)
 static char *read_long_string(int size, int skip)
 {
 	char buffer[512];
-	char *name = malloc(size + 1);
+	char *name = MALLOC(size + 1);
 	int i, res, length = size;
-
-	if(name == NULL)
-		MEM_ERROR();
 
 	for(i = 0; size > 0; i++) {
 		int expected = size > 512 ? 512 : size;
@@ -170,9 +168,7 @@ static char *read_long_string(int size, int skip)
 			}
 
 			memmove(name, filename, length + 1);
-			name = realloc(name, length + 1);
-			if(name == NULL)
-				MEM_ERROR();
+			name = REALLOC(name, length + 1);
 		}
 	}
 
@@ -231,7 +227,7 @@ static char *get_component(char *target, char **targname)
 	while(*target != '/' && *target != '\0')
 		target ++;
 
-	*targname = strndup(start, target - start);
+	*targname = STRNDUP(start, target - start);
 
 	while(*target == '/')
 		target ++;
@@ -245,9 +241,7 @@ static struct inode_info *new_inode(struct tar_file *tar_file)
 	struct inode_info *inode;
 	int bytes = tar_file->link ? strlen(tar_file->link) + 1 : 0;
 
-	inode = malloc(sizeof(struct inode_info) + bytes);
-	if(inode == NULL)
-		MEM_ERROR();
+	inode = MALLOC(sizeof(struct inode_info) + bytes);
 
 	if(bytes)
 		memcpy(&inode->symlink, tar_file->link, bytes);
@@ -286,10 +280,7 @@ static struct inode_info *copy_inode(struct inode_info *source)
 	struct inode_info *inode;
 	int bytes = S_ISLNK(source->buf.st_mode) ? strlen(source->symlink) + 1 : 0;
 
-	inode = malloc(sizeof(struct inode_info) + bytes);
-	if(inode == NULL)
-		MEM_ERROR();
-
+	inode = MALLOC(sizeof(struct inode_info) + bytes);
 	memcpy(inode, source, sizeof(struct inode_info) + bytes);
 
 	return inode;
@@ -733,10 +724,7 @@ static int read_pax_header(struct tar_file *file, long long st_size)
 	int map_entries = 0, cur_entry = 0;
 	char *name = NULL;
 
-	data = malloc(size);
-	if(data == NULL)
-		MEM_ERROR();
-
+	data = MALLOC(size);
 	res = read_bytes(STDIN_FILENO, data, size);
 	if(res < size) {
 		if(res != -1)
@@ -813,13 +801,13 @@ static int read_pax_header(struct tar_file *file, long long st_size)
 			file->buf.st_mtime = number;
 			file->have_mtime = TRUE;
 		} else if(strcmp(keyword, "uname") == 0)
-			file->uname = strdup(value);
+			file->uname = STRDUP(value);
 		else if(strcmp(keyword, "gname") == 0)
-			file->gname = strdup(value);
+			file->gname = STRDUP(value);
 		else if(strcmp(keyword, "path") == 0)
-			file->pathname = strdup(skip_components(value, vsize, NULL));
+			file->pathname = STRDUP(skip_components(value, vsize, NULL));
 		else if(strcmp(keyword, "linkpath") == 0)
-			file->link = strdup(value);
+			file->link = STRDUP(value);
 		else if(strcmp(keyword, "GNU.sparse.major") == 0) {
 			res = sscanf(value, "%lld %n", &number, &bytes);
 			if(res < 1 || value[bytes] != '\0')
@@ -836,7 +824,7 @@ static int read_pax_header(struct tar_file *file, long long st_size)
 				goto failed;
 			realsize = number;
 		} else if(strcmp(keyword, "GNU.sparse.name") == 0)
-			name = strdup(value);
+			name = STRDUP(value);
 		else if(strcmp(keyword, "GNU.sparse.size") == 0) {
 			res = sscanf(value, "%lld %n", &number, &bytes);
 			if(res < 1 || value[bytes] != '\0')
@@ -847,9 +835,7 @@ static int read_pax_header(struct tar_file *file, long long st_size)
 			res = sscanf(value, "%lld %n", &number, &bytes);
 			if(res < 1 || value[bytes] != '\0')
 				goto failed;
-			file->map = malloc(number * sizeof(struct file_map));
-			if(file->map == NULL)
-				MEM_ERROR();
+			file->map = MALLOC(number * sizeof(struct file_map));
 			map_entries = number;
 			cur_entry = 0;
 			old_gnu_pax = 2;
@@ -950,9 +936,7 @@ static struct file_map *read_sparse_headers(struct tar_file *file, struct short_
 		goto failed;
 	}
 
-	map = malloc(4 * sizeof(struct file_map));
-	if(map == NULL)
-		MEM_ERROR();
+	map = MALLOC(4 * sizeof(struct file_map));
 
 	/* There should always be at least one sparse entry */
 	map[0].offset = read_number(short_header->sparse[0].offset, 12);
@@ -1004,9 +988,7 @@ static struct file_map *read_sparse_headers(struct tar_file *file, struct short_
 			goto failed;
 		}
 
-		map = realloc(map, (map_entries + 21) * sizeof(struct file_map));
-		if(map == NULL)
-			MEM_ERROR();
+		map = REALLOC(map, (map_entries + 21) * sizeof(struct file_map));
 
 		/* There may be up to 21 sparse entries in this long header.
 		 * An offset of 0 means unused */
@@ -1118,11 +1100,8 @@ static struct file_map *read_sparse_map(struct tar_file *file, int *entries)
 		else {
 			number = res;
 
-			if(i % 50 == 0) {
-				map = realloc(map, (i + 50) * sizeof(struct file_map));
-				if(map == NULL)
-					MEM_ERROR();
-			}
+			if(i % 50 == 0)
+				map = REALLOC(map, (i + 50) * sizeof(struct file_map));
 
 			map[i].offset = offset;
 			map[i++].number = number;
@@ -1144,13 +1123,13 @@ static void copy_tar_header(struct tar_file *dest, struct tar_file *source)
 {
 	memcpy(dest, source, sizeof(struct tar_file));
 	if(source->pathname)
-		dest->pathname = strdup(source->pathname);
+		dest->pathname = STRDUP(source->pathname);
 	if(source->link)
-		dest->link = strdup(source->link);
+		dest->link = STRDUP(source->link);
 	if(source->uname)
-		dest->uname = strdup(source->uname);
+		dest->uname = STRDUP(source->uname);
 	if(source->gname)
-		dest->gname = strdup(source->gname);
+		dest->gname = STRDUP(source->gname);
 }
 
 
@@ -1192,9 +1171,7 @@ static struct tar_file *read_tar_header(int *status)
 	char *filename, *user, *group;
 	static struct tar_file *global = NULL;
 
-	file = malloc(sizeof(struct tar_file));
-	if(file == NULL)
-		MEM_ERROR();
+	file = MALLOC(sizeof(struct tar_file));
 
 	if(global)
 		copy_tar_header(file, global);
@@ -1274,9 +1251,7 @@ again:
 			goto again;
 		case TAR_GXHDR:
 			if(global == NULL) {
-				global = malloc(sizeof(struct tar_file));
-				if(global == NULL)
-					MEM_ERROR();
+				global = MALLOC(sizeof(struct tar_file));
 				memset(global, 0, sizeof(struct tar_file));
 			}
 			res = read_pax_header(global, file->buf.st_size);
@@ -1318,17 +1293,14 @@ again:
 		filename = skip_components(header.prefix, 155, &size);
 		length1 = strnlen(filename, size);
 		length2 = strnlen(header.name, 100);
-		file->pathname = malloc(length1 + length2 + 2);
-		if(file->pathname == NULL)
-			MEM_ERROR();
-
+		file->pathname = MALLOC(length1 + length2 + 2);
 		memcpy(file->pathname, filename, length1);
 		file->pathname[length1] = '/';
 		memcpy(file->pathname + length1 + 1, header.name, length2);
 		file->pathname[length1 + length2 + 1] = '\0';
 	} else if (file->pathname == NULL) {
 		filename = skip_components(header.name, 100, &size);
-		file->pathname = strndup(filename, size);
+		file->pathname = STRNDUP(filename, size);
 	}
 
 	/* Ignore empty filenames */
@@ -1373,7 +1345,7 @@ again:
 	if(file->uname)
 		user = file->uname;
 	else
-		user = strndup(header.user, 32);
+		user = STRNDUP(header.user, 32);
 
 	if(strlen(user)) {
 		struct passwd *pwuid = getpwnam(user);
@@ -1404,7 +1376,7 @@ again:
 	if(file->gname)
 		group = file->gname;
 	else
-		group = strndup(header.group, 32);
+		group = STRNDUP(header.group, 32);
 
 	if(strlen(group)) {
 		struct group *grgid = getgrnam(group);
@@ -1450,7 +1422,7 @@ again:
 		file->buf.st_mode = 0777 | S_IFLNK;
 
 		if(file->link == FALSE)
-			file->link = strndup(header.link, 100);
+			file->link = STRNDUP(header.link, 100);
 	}
 
 	/* Handle hard links */
@@ -1461,12 +1433,12 @@ again:
 			if(link != file->link) {
 				char *old = file->link;
 
-				file->link = strdup(link);
+				file->link = STRDUP(link);
 				free(old);
 			}
 		} else {
 			filename = skip_components(header.link, 100, &size);
-			file->link = strndup(filename, size);
+			file->link = STRNDUP(filename, size);
 		}
 	}
 
@@ -1520,9 +1492,7 @@ long long read_tar_file()
 	while(1) {
 		struct file_buffer *file_buffer;
 
-		file_buffer = malloc(sizeof(struct file_buffer));
-		if(file_buffer == NULL)
-			MEM_ERROR();
+		file_buffer = MALLOC(sizeof(struct file_buffer));
 
 		while(1) {
 			tar_file = read_tar_header(&status);
