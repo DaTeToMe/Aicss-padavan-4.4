@@ -397,7 +397,7 @@ struct nvram_pair router_defaults[] = {
 	{ "rawd_enable", "0" },
 	{ "achk_enable", "1" },
 	{ "nfsd_enable", "0" },
-	{ "optw_enable", "2" },
+	{ "optw_enable", "0" },
 	{ "dlna_disc", "895" },
 	{ "dlna_root", "0" },
 	{ "dlna_sort", "0" },
