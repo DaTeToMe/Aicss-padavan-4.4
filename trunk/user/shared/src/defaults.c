@@ -1042,7 +1042,7 @@ struct nvram_pair router_defaults[] = {
 	{ "hw_nat_mode", "1" },
 	{ "sw_nat_mode", "0" },
 #if defined(USE_SFE)
-	{ "sfe_enable", "1" },		/* Software Offload Routing IPv4/IPv6 */
+	{ "sfe_enable", "0" },		/* Software Offload Routing IPv4/IPv6 */
 #endif
 	{ "fw_syn_cook", "1" },		/* Prevent SYN Flood Attack */
 	{ "fw_mac_drop", "0" },
