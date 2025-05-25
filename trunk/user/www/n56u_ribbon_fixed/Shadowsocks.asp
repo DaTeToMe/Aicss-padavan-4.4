@@ -135,10 +135,6 @@ setTimeout('document.getElementById("btn_ctime").style.display="none";',1000);
 			fill_dns2tcp_status(dns2tcp_status());
 			fill_dnsproxy_status(dnsproxy_status());
 			var wan0_dns = '<% nvram_get_x("","wan0_dns"); %>';
-			// use local DNS
-			//if (wan0_dns.length > 0){
-			//		$j("select[name='china_dns']").prepend($j('<option value="'+wan0_dns+'" selected>本地DNS ' + wan0_dns + '</option>'));
-			//}
 			$("chnroute_count").innerHTML = '<#menu5_17_3#>' + chnroute_count();
 			$("gfwlist_count").innerHTML = '<#menu5_17_3#>' + gfwlist_count();
 			switch_ss_type();
@@ -373,21 +369,23 @@ setTimeout('document.getElementById("btn_ctime").style.display="none";',1000);
 			document.form.submit();
 		}
 		function submitInternet(v) {
-			showLoading();
+			ctime();
 			$j.ajax({
 				type: "POST",
 				url: "/Shadowsocks_action.asp",
 				data: {
 					connect_action: v,
 				},
-				dataType: "json",
+				dataType: "text",
 				success: function (response) {
-					alert("脚本执行成功...")
+					setTimeout("dtime();alert('脚本执行成功...');", 1000);
 				},
-				complete: function(xhr, ts) {
-					hideLoading();
+				error: function (xhr) {
+					alert("脚本执行失败！！！");
+					dtime();
 				}
 			});
+			return false; // 阻止事件冒泡和默认行为
 		}
 		function change_ss_watchcat_display() {
 			var v = document.form.ss_router_proxy[0].checked;
