@@ -22,7 +22,7 @@ struct nvram_pair router_defaults[] = {
 	{ "log_ipaddr", "" },			/* syslog recipient IP */
 	{ "log_port", "514" },			/* syslog recipient Port */
 	{ "log_level", "0" },			/* Bitmask 0:off 1:denied 2:accepted */
-	{ "console_loglevel", "7" },	/* Kernel panics only */
+	{ "console_loglevel", "5" },	/* Kernel panics only */
 	{ "stats_server", "" },			/* URL for posting stats */
 
 	/* Big switches */
@@ -137,7 +137,7 @@ struct nvram_pair router_defaults[] = {
 	{ "http_lanport", "80" },		/* HTTP LAN port to listen on */
 	{ "https_lport", "443" },		/* HTTPS LAN port to listen on */
 	{ "https_clist", DEF_HTTPS_CIPH_LIST },	/* HTTPS SSL cipher list */
-	{ "fw_dos_x", "0" },			/* DoS Attacks Protection */
+	{ "fw_dos_x", "1" },			/* DoS Attacks Protection */
 	{ "dr_enable_x", "1" },			/* Use DHCP Routes */
 	{ "mr_enable_x", "0" },			/* Multicast Routing to LAN */
 	{ "mr_qleave_x", "1" },
@@ -390,7 +390,7 @@ struct nvram_pair router_defaults[] = {
 	{ "apps_itunes", "0"},
 	{ "sh_num", "0" },
 	{ "computer_name", BOARD_NAME },
-	{ "pcache_reclaim", "2" },
+	{ "pcache_reclaim", "3" },
 	{ "usb3_disable", "1" },
 	{ "u2ec_enable", "1" },
 	{ "lprd_enable", "1" },
@@ -451,7 +451,7 @@ struct nvram_pair router_defaults[] = {
 	{ "upnp_proto", "0" },
 	{ "upnp_secure", "1" },
 	{ "upnp_clean_min", "10" },
-	{ "upnp_clean_int", "600" },
+	{ "upnp_clean_int", "300" },
 	{ "upnp_iport_min", "21" },
 	{ "upnp_iport_max", "65535" },
 	{ "upnp_eport_min", "80" },
@@ -1009,7 +1009,7 @@ struct nvram_pair router_defaults[] = {
 	{ "ether_igmp", "0" },
 	{ "ether_uport", "0" },		/* WAN port in AP mode is static upstream by default */
 	{ "ether_m2u", "2" },
-	{ "ether_green", "1" },
+	{ "ether_green", "0" },
 	{ "ether_eee", "0" },
 	{ "ether_jumbo", "1" },
 #if (BOARD_NUM_ETH_LEDS > 1)
@@ -1042,9 +1042,9 @@ struct nvram_pair router_defaults[] = {
 	{ "hw_nat_mode", "1" },
 	{ "sw_nat_mode", "0" },
 #if defined(USE_SFE)
-	{ "sfe_enable", "0" },		/* Software Offload Routing IPv4/IPv6 */
+	{ "sfe_enable", "1" },		/* Software Offload Routing IPv4/IPv6 */
 #endif
-	{ "fw_syn_cook", "0" },		/* Prevent SYN Flood Attack */
+	{ "fw_syn_cook", "1" },		/* Prevent SYN Flood Attack */
 	{ "fw_mac_drop", "0" },
 	{ "nf_nat_type", "1" },
 	{ "nf_nat_loop", "1" },
