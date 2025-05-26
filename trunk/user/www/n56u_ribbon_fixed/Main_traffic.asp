@@ -15,6 +15,12 @@
 <script type="text/javascript" src="/bootstrap/js/bootstrap.min.js"></script>
 <script type="text/javascript" src="/state.js"></script>
 <script type="text/javascript" src="/popup.js"></script>
+
+<!-- 安全的数据传递：将ASP数据嵌入到隐藏的script标签中 -->
+<script type="application/json" id="traffic-data">
+<% nvram_dump("traffic_stats.json",""); %>
+</script>
+
 <script>
    var $j = jQuery.noConflict();
    var sortDirection = {up: false, down: false}; // false 为升序，true 为降序
@@ -159,10 +165,28 @@
    
 function loadTrafficStats() {
     try {
-        var trafficData = '<% nvram_dump("traffic_stats.json",""); %>';
-        // 先用临时变量解析，避免直接赋值给全局变量时的错误
-        const data = typeof trafficData === 'object' ? trafficData : JSON.parse(trafficData);
-        window.trafficStatsData = data;
+        // 安全的数据获取方式：从隐藏的script标签中读取JSON数据
+        var dataElement = document.getElementById('traffic-data');
+        if (!dataElement) {
+            throw new Error('数据元素未找到');
+        }
+        
+        var trafficDataText = dataElement.textContent || dataElement.innerText;
+        if (!trafficDataText || trafficDataText.trim() === '') {
+            throw new Error('未获取到数据内容');
+        }
+        
+        // 尝试解析JSON数据
+        var parsedData;
+        try {
+            parsedData = JSON.parse(trafficDataText);
+        } catch (parseError) {
+            // 如果解析失败，可能数据本身就是对象格式，尝试直接使用
+            console.warn('JSON解析失败，尝试直接使用数据:', parseError);
+            parsedData = trafficDataText;
+        }
+        
+        window.trafficStatsData = parsedData;
         
         if (window.trafficStatsData === null || window.trafficStatsData === "null" || window.trafficStatsData === "" || Object.keys(window.trafficStatsData).length < 3) {
             document.getElementById('traffic-grid').innerHTML = 
