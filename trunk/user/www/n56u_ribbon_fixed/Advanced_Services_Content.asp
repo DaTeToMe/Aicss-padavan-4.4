@@ -135,7 +135,7 @@ function checkAndAddCronTasks() {
   // 使用简单的正则表达式匹配任务是否存在,无论是否被注释
   var patterns = {
       reboot: /28\s+5\s+\*\s+\*\s+\*\s+reboot/m,
-      traffic: /\*\/5\s+\*\s+\*\s+\*\s+\*\s+nice\s+-n\s+18\s+\/usr\/bin\/traffic\.sh/m,
+      traffic: /\*\/10\s+\*\s+\*\s+\*\s+\*\s+nice\s+-n\s+18\s+\/usr\/bin\/traffic\.sh/m,
       flytrap: /\*\/30\s+\*\s+\*\s+\*\s+\*\s+nice\s+-n\s+18\s+\/usr\/bin\/flytrap\.sh\s+['"]log_blocked_ips['"]\s+>>\s+\/tmp\/flytrap\.log/m
   };
 
