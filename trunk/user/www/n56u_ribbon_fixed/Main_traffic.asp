@@ -168,7 +168,7 @@ function loadTrafficStats() {
             document.getElementById('traffic-grid').innerHTML = 
                 '<div class="alert alert-danger" style="margin:10px">未找到有效的流量统计数据<br>' +
                 '可能原因：<ul style="margin-top:10px">' +
-                '<li>设备刚重启，需要等待约5分钟才会开始统计</li>' +
+                '<li>设备刚重启，需要等待约10分钟才会开始统计</li>' +
                 '<li>统计功能可能未正确开启</li>' +
                 '<li>统计数据文件可能损坏</li></ul></div>';
             document.getElementById('update_time').innerHTML = '';
@@ -187,7 +187,7 @@ function loadTrafficStats() {
             document.getElementById('traffic-grid').innerHTML = 
                 '<div class="alert alert-danger" style="margin:10px">未找到有效的流量统计数据<br>' +
                 '可能原因：<ul style="margin-top:10px">' +
-                '<li>设备刚重启，需要等待约5分钟才会开始统计</li>' +
+                '<li>设备刚重启，需要等待约10分钟才会开始统计</li>' +
                 '<li>统计功能可能未正确开启</li>' +
                 '<li>统计数据文件可能损坏</li></ul></div>';
             document.getElementById('update_time').innerHTML = '';
@@ -260,7 +260,7 @@ function loadTrafficStats() {
                                </div>
                                
                                <div class="alert alert-info" style="margin: 10px;">
-                                   本流量统计非实时统计，每五分钟更新一次<br>使用本功能需在 系统管理 - 服务 - 调度任务 (Crontab) 中取消 traffic 前的 # 号注释
+                                   本流量统计非实时统计，每10分钟更新一次<br>使用本功能需在 系统管理 - 服务 - 调度任务 (Crontab) 中取消 traffic 前的 # 号注释
                                </div>
                                <div id="update_time" style="text-align:right;padding:5px;"></div>
                                <div id="traffic-grid"></div>
