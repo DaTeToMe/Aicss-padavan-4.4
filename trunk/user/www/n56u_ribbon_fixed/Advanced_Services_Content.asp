@@ -112,8 +112,8 @@ function checkAndAddCronTasks() {
       },
       {
           id: "traffic", 
-          comment: "# 每5分钟进行设备流量统计\n",
-          task: "# */5 * * * * nice -n 18 /usr/bin/traffic.sh"
+          comment: "# 每10分钟进行设备流量统计\n",
+          task: "# */10 * * * * nice -n 18 /usr/bin/traffic.sh"
       },
       {
           id: "flytrap",
