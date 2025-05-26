@@ -1,32 +1,3 @@
-/*
- * linux/fs/9p/error.c
- *
- * Error string handling
- *
- * Plan 9 uses error strings, Unix uses error numbers.  These functions
- * try to help manage that and provide for dynamically adding error
- * mappings.
- *
- *  Copyright (C) 2004 by Eric Van Hensbergen <ericvh@gmail.com>
- *  Copyright (C) 2002 by Ron Minnich <rminnich@lanl.gov>
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License version 2
- *  as published by the Free Software Foundation.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to:
- *  Free Software Foundation
- *  51 Franklin Street, Fifth Floor
- *  Boston, MA  02111-1301  USA
- *
- */
-
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/module.h>
@@ -36,11 +7,11 @@
 #include <net/9p/9p.h>
 
 /**
- * struct errormap - map string errors from Plan 9 to Linux numeric ids
- * @name: string sent over 9P
- * @val: numeric id most closely representing @name
- * @namelen: length of string
- * @list: hash-table list for string lookup
+ * struct errormap - 将Plan 9的字符串错误映射到Linux数字ID
+ * @name: 通过9P协议发送的字符串
+ * @val: 最接近代表@name的数字ID
+ * @namelen: 字符串长度
+ * @list: 用于字符串查找的哈希表列表
  */
 struct errormap {
 	char *name;
@@ -53,140 +24,140 @@ struct errormap {
 #define ERRHASHSZ		32
 static struct hlist_head hash_errmap[ERRHASHSZ];
 
-/* FixMe - reduce to a reasonable size */
+/* 修正 - 减少到合理的大小 */
 static struct errormap errmap[] = {
-	{"Operation not permitted", EPERM},
-	{"wstat prohibited", EPERM},
-	{"No such file or directory", ENOENT},
-	{"directory entry not found", ENOENT},
-	{"file not found", ENOENT},
-	{"Interrupted system call", EINTR},
-	{"Input/output error", EIO},
-	{"No such device or address", ENXIO},
-	{"Argument list too long", E2BIG},
-	{"Bad file descriptor", EBADF},
-	{"Resource temporarily unavailable", EAGAIN},
-	{"Cannot allocate memory", ENOMEM},
-	{"Permission denied", EACCES},
-	{"Bad address", EFAULT},
-	{"Block device required", ENOTBLK},
-	{"Device or resource busy", EBUSY},
-	{"File exists", EEXIST},
-	{"Invalid cross-device link", EXDEV},
-	{"No such device", ENODEV},
-	{"Not a directory", ENOTDIR},
-	{"Is a directory", EISDIR},
-	{"Invalid argument", EINVAL},
-	{"Too many open files in system", ENFILE},
-	{"Too many open files", EMFILE},
-	{"Text file busy", ETXTBSY},
-	{"File too large", EFBIG},
-	{"No space left on device", ENOSPC},
-	{"Illegal seek", ESPIPE},
-	{"Read-only file system", EROFS},
-	{"Too many links", EMLINK},
-	{"Broken pipe", EPIPE},
-	{"Numerical argument out of domain", EDOM},
-	{"Numerical result out of range", ERANGE},
-	{"Resource deadlock avoided", EDEADLK},
-	{"File name too long", ENAMETOOLONG},
-	{"No locks available", ENOLCK},
-	{"Function not implemented", ENOSYS},
-	{"Directory not empty", ENOTEMPTY},
-	{"Too many levels of symbolic links", ELOOP},
-	{"No message of desired type", ENOMSG},
-	{"Identifier removed", EIDRM},
-	{"No data available", ENODATA},
-	{"Machine is not on the network", ENONET},
-	{"Package not installed", ENOPKG},
-	{"Object is remote", EREMOTE},
-	{"Link has been severed", ENOLINK},
-	{"Communication error on send", ECOMM},
-	{"Protocol error", EPROTO},
-	{"Bad message", EBADMSG},
-	{"File descriptor in bad state", EBADFD},
-	{"Streams pipe error", ESTRPIPE},
-	{"Too many users", EUSERS},
-	{"Socket operation on non-socket", ENOTSOCK},
-	{"Message too long", EMSGSIZE},
-	{"Protocol not available", ENOPROTOOPT},
-	{"Protocol not supported", EPROTONOSUPPORT},
-	{"Socket type not supported", ESOCKTNOSUPPORT},
-	{"Operation not supported", EOPNOTSUPP},
-	{"Protocol family not supported", EPFNOSUPPORT},
-	{"Network is down", ENETDOWN},
-	{"Network is unreachable", ENETUNREACH},
-	{"Network dropped connection on reset", ENETRESET},
-	{"Software caused connection abort", ECONNABORTED},
-	{"Connection reset by peer", ECONNRESET},
-	{"No buffer space available", ENOBUFS},
-	{"Transport endpoint is already connected", EISCONN},
-	{"Transport endpoint is not connected", ENOTCONN},
-	{"Cannot send after transport endpoint shutdown", ESHUTDOWN},
-	{"Connection timed out", ETIMEDOUT},
-	{"Connection refused", ECONNREFUSED},
-	{"Host is down", EHOSTDOWN},
-	{"No route to host", EHOSTUNREACH},
-	{"Operation already in progress", EALREADY},
-	{"Operation now in progress", EINPROGRESS},
-	{"Is a named type file", EISNAM},
-	{"Remote I/O error", EREMOTEIO},
-	{"Disk quota exceeded", EDQUOT},
-/* errors from fossil, vacfs, and u9fs */
-	{"fid unknown or out of range", EBADF},
-	{"permission denied", EACCES},
-	{"file does not exist", ENOENT},
-	{"authentication failed", ECONNREFUSED},
-	{"bad offset in directory read", ESPIPE},
-	{"bad use of fid", EBADF},
-	{"wstat can't convert between files and directories", EPERM},
-	{"directory is not empty", ENOTEMPTY},
-	{"file exists", EEXIST},
-	{"file already exists", EEXIST},
-	{"file or directory already exists", EEXIST},
-	{"fid already in use", EBADF},
-	{"file in use", ETXTBSY},
-	{"i/o error", EIO},
-	{"file already open for I/O", ETXTBSY},
-	{"illegal mode", EINVAL},
-	{"illegal name", ENAMETOOLONG},
-	{"not a directory", ENOTDIR},
-	{"not a member of proposed group", EPERM},
-	{"not owner", EACCES},
-	{"only owner can change group in wstat", EACCES},
-	{"read only file system", EROFS},
-	{"no access to special file", EPERM},
-	{"i/o count too large", EIO},
-	{"unknown group", EINVAL},
-	{"unknown user", EINVAL},
-	{"bogus wstat buffer", EPROTO},
-	{"exclusive use file already open", EAGAIN},
-	{"corrupted directory entry", EIO},
-	{"corrupted file entry", EIO},
-	{"corrupted block label", EIO},
-	{"corrupted meta data", EIO},
-	{"illegal offset", EINVAL},
-	{"illegal path element", ENOENT},
-	{"root of file system is corrupted", EIO},
-	{"corrupted super block", EIO},
-	{"protocol botch", EPROTO},
-	{"file system is full", ENOSPC},
-	{"file is in use", EAGAIN},
-	{"directory entry is not allocated", ENOENT},
-	{"file is read only", EROFS},
-	{"file has been removed", EIDRM},
-	{"only support truncation to zero length", EPERM},
-	{"cannot remove root", EPERM},
-	{"file too big", EFBIG},
-	{"venti i/o error", EIO},
-	/* these are not errors */
-	{"u9fs rhostsauth: no authentication required", 0},
-	{"u9fs authnone: no authentication required", 0},
+	{"操作不被允许", EPERM},
+	{"wstat被禁止", EPERM},
+	{"没有此文件或目录", ENOENT},
+	{"找不到目录条目", ENOENT},
+	{"找不到文件", ENOENT},
+	{"系统调用被中断", EINTR},
+	{"输入/输出错误", EIO},
+	{"没有此设备或地址", ENXIO},
+	{"参数列表过长", E2BIG},
+	{"错误的文件描述符", EBADF},
+	{"资源暂时不可用", EAGAIN},
+	{"无法分配内存", ENOMEM},
+	{"权限被拒绝", EACCES},
+	{"错误的地址", EFAULT},
+	{"需要块设备", ENOTBLK},
+	{"设备或资源忙", EBUSY},
+	{"文件已存在", EEXIST},
+	{"无效的跨设备链接", EXDEV},
+	{"没有此设备", ENODEV},
+	{"不是目录", ENOTDIR},
+	{"是一个目录", EISDIR},
+	{"无效参数", EINVAL},
+	{"系统打开文件过多", ENFILE},
+	{"打开文件过多", EMFILE},
+	{"文本文件忙", ETXTBSY},
+	{"文件过大", EFBIG},
+	{"设备上没有剩余空间", ENOSPC},
+	{"非法定位", ESPIPE},
+	{"只读文件系统", EROFS},
+	{"链接过多", EMLINK},
+	{"管道破裂", EPIPE},
+	{"数值参数超出域", EDOM},
+	{"数值结果超出范围", ERANGE},
+	{"避免资源死锁", EDEADLK},
+	{"文件名过长", ENAMETOOLONG},
+	{"没有可用的锁", ENOLCK},
+	{"功能未实现", ENOSYS},
+	{"目录不为空", ENOTEMPTY},
+	{"符号链接层次过多", ELOOP},
+	{"没有所需类型的消息", ENOMSG},
+	{"标识符已删除", EIDRM},
+	{"没有可用数据", ENODATA},
+	{"机器不在网络上", ENONET},
+	{"包未安装", ENOPKG},
+	{"对象是远程的", EREMOTE},
+	{"链接已断开", ENOLINK},
+	{"发送时通信错误", ECOMM},
+	{"协议错误", EPROTO},
+	{"错误消息", EBADMSG},
+	{"文件描述符状态错误", EBADFD},
+	{"流管道错误", ESTRPIPE},
+	{"用户过多", EUSERS},
+	{"在非套接字上进行套接字操作", ENOTSOCK},
+	{"消息过长", EMSGSIZE},
+	{"协议不可用", ENOPROTOOPT},
+	{"协议不支持", EPROTONOSUPPORT},
+	{"套接字类型不支持", ESOCKTNOSUPPORT},
+	{"操作不支持", EOPNOTSUPP},
+	{"协议族不支持", EPFNOSUPPORT},
+	{"网络已关闭", ENETDOWN},
+	{"网络不可达", ENETUNREACH},
+	{"网络在重置时断开连接", ENETRESET},
+	{"软件导致连接中止", ECONNABORTED},
+	{"连接被对端重置", ECONNRESET},
+	{"没有可用的缓冲区空间", ENOBUFS},
+	{"传输端点已连接", EISCONN},
+	{"传输端点未连接", ENOTCONN},
+	{"传输端点关闭后无法发送", ESHUTDOWN},
+	{"连接超时", ETIMEDOUT},
+	{"连接被拒绝", ECONNREFUSED},
+	{"主机已关闭", EHOSTDOWN},
+	{"没有到主机的路由", EHOSTUNREACH},
+	{"操作已在进行中", EALREADY},
+	{"操作正在进行中", EINPROGRESS},
+	{"是一个命名类型文件", EISNAM},
+	{"远程I/O错误", EREMOTEIO},
+	{"磁盘配额超限", EDQUOT},
+/* 来自fossil、vacfs和u9fs的错误 */
+	{"fid未知或超出范围", EBADF},
+	{"权限被拒绝", EACCES},
+	{"文件不存在", ENOENT},
+	{"认证失败", ECONNREFUSED},
+	{"目录读取中的错误偏移", ESPIPE},
+	{"fid使用错误", EBADF},
+	{"wstat无法在文件和目录间转换", EPERM},
+	{"目录不为空", ENOTEMPTY},
+	{"文件已存在", EEXIST},
+	{"文件已经存在", EEXIST},
+	{"文件或目录已存在", EEXIST},
+	{"fid已在使用中", EBADF},
+	{"文件使用中", ETXTBSY},
+	{"i/o错误", EIO},
+	{"文件已打开进行I/O", ETXTBSY},
+	{"非法模式", EINVAL},
+	{"非法名称", ENAMETOOLONG},
+	{"不是目录", ENOTDIR},
+	{"不是建议组的成员", EPERM},
+	{"不是所有者", EACCES},
+	{"只有所有者可以在wstat中更改组", EACCES},
+	{"只读文件系统", EROFS},
+	{"无法访问特殊文件", EPERM},
+	{"i/o计数过大", EIO},
+	{"未知组", EINVAL},
+	{"未知用户", EINVAL},
+	{"虚假的wstat缓冲区", EPROTO},
+	{"独占使用文件已打开", EAGAIN},
+	{"损坏的目录条目", EIO},
+	{"损坏的文件条目", EIO},
+	{"损坏的块标签", EIO},
+	{"损坏的元数据", EIO},
+	{"非法偏移", EINVAL},
+	{"非法路径元素", ENOENT},
+	{"文件系统根目录已损坏", EIO},
+	{"损坏的超级块", EIO},
+	{"协议错误", EPROTO},
+	{"文件系统已满", ENOSPC},
+	{"文件正在使用中", EAGAIN},
+	{"目录条目未分配", ENOENT},
+	{"文件为只读", EROFS},
+	{"文件已被删除", EIDRM},
+	{"仅支持截断到零长度", EPERM},
+	{"无法删除根目录", EPERM},
+	{"文件过大", EFBIG},
+	{"venti i/o错误", EIO},
+	/* 这些不是错误 */
+	{"u9fs rhostsauth: 不需要认证", 0},
+	{"u9fs authnone: 不需要认证", 0},
 	{NULL, -1}
 };
 
 /**
- * p9_error_init - preload mappings into hash list
+ * p9_error_init - 将映射预加载到哈希列表中
  *
  */
 
@@ -195,11 +166,11 @@ int p9_error_init(void)
 	struct errormap *c;
 	int bucket;
 
-	/* initialize hash table */
+	/* 初始化哈希表 */
 	for (bucket = 0; bucket < ERRHASHSZ; bucket++)
 		INIT_HLIST_HEAD(&hash_errmap[bucket]);
 
-	/* load initial error map into hash table */
+	/* 将初始错误映射加载到哈希表中 */
 	for (c = errmap; c->name != NULL; c++) {
 		c->namelen = strlen(c->name);
 		bucket = jhash(c->name, c->namelen, 0) % ERRHASHSZ;
@@ -212,9 +183,9 @@ int p9_error_init(void)
 EXPORT_SYMBOL(p9_error_init);
 
 /**
- * errstr2errno - convert error string to error number
- * @errstr: error string
- * @len: length of error string
+ * errstr2errno - 将错误字符串转换为错误编号
+ * @errstr: 错误字符串
+ * @len: 错误字符串长度
  *
  */
 
@@ -235,9 +206,9 @@ int p9_errstr2errno(char *errstr, int len)
 	}
 
 	if (errno == 0) {
-		/* TODO: if error isn't found, add it dynamically */
+		/* TODO: 如果找不到错误，动态添加它 */
 		errstr[len] = 0;
-		pr_err("%s: server reported unknown error %s\n",
+		pr_err("%s: 服务器报告未知错误 %s\n",
 		       __func__, errstr);
 		errno = ESERVERFAULT;
 	}
