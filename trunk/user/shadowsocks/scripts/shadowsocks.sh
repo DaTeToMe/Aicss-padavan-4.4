@@ -2,26 +2,29 @@
 
 NAME=shadowsocksr
 
-# 优化：批量缓存常用nvram变量，避免重复系统调用
+# 优化1：批量缓存常用nvram变量，避免重复系统调用
 cache_nvram_vars() {
-    pppoemwan=$(nvram get pppoemwan_enable)
-    http_username=$(nvram get http_username)
-    run_mode=$(nvram get ss_run_mode)
-    lan_con=$(nvram get lan_con)
-    ss_cgroups=$(nvram get ss_cgroups)
-    ss_threads=$(nvram get ss_threads)
-    tunnel_forward=$(nvram get tunnel_forward)
-    s_dports=$(nvram get s_dports)
-    socks5_port=$(nvram get socks5_port)
-    socks5_enable=$(nvram get socks5_enable)
-    ss_watchcat=$(nvram get ss_watchcat)
-    ss_update_chnroute=$(nvram get ss_update_chnroute)
-    ss_update_gfwlist=$(nvram get ss_update_gfwlist)
-    ss_enable=$(nvram get ss_enable)
-    ss_adblock=$(nvram get ss_adblock)
-    ss_adblock_url=$(nvram get ss_adblock_url)
-    udp_relay_server=$(nvram get udp_relay_server)
-    backup_server=$(nvram get backup_server)
+    # 一次性获取所有需要的nvram变量，减少系统调用
+    eval $(nvram show | grep -E '^(pppoemwan_enable|http_username|ss_run_mode|lan_con|ss_cgroups|ss_threads|tunnel_forward|s_dports|socks5_port|socks5_enable|ss_watchcat|ss_update_chnroute|ss_update_gfwlist|ss_enable|ss_adblock|ss_adblock_url|udp_relay_server|backup_server)=' | sed 's/^/CACHED_/')
+    
+    pppoemwan=$CACHED_pppoemwan_enable
+    http_username=$CACHED_http_username
+    run_mode=$CACHED_ss_run_mode
+    lan_con=$CACHED_lan_con
+    ss_cgroups=$CACHED_ss_cgroups
+    ss_threads=$CACHED_ss_threads
+    tunnel_forward=$CACHED_tunnel_forward
+    s_dports=$CACHED_s_dports
+    socks5_port=$CACHED_socks5_port
+    socks5_enable=$CACHED_socks5_enable
+    ss_watchcat=$CACHED_ss_watchcat
+    ss_update_chnroute=$CACHED_ss_update_chnroute
+    ss_update_gfwlist=$CACHED_ss_update_gfwlist
+    ss_enable=$CACHED_ss_enable
+    ss_adblock=$CACHED_ss_adblock
+    ss_adblock_url=$CACHED_ss_adblock_url
+    udp_relay_server=$CACHED_udp_relay_server
+    backup_server=$CACHED_backup_server
 }
 
 # 实时获取可能变化的关键变量
@@ -94,7 +97,6 @@ cgroups_init() {
 	if [ "$ss_cgroups" = "1" ]; then
 		cpu_limit=$(nvram get ss_cgoups_cpu_s)
 		mem_limit=$(nvram get ss_cgoups_mem_s)
-		log "启用进程资源限制, CPU: $cpu_limit, 内存: $mem_limit"
 		mkdir -p /sys/fs/cgroup/cpu/$NAME
 		mkdir -p /sys/fs/cgroup/memory/$NAME
 		echo $cpu_limit > /sys/fs/cgroup/cpu/$NAME/cpu.shares
@@ -168,15 +170,12 @@ get_arg_out() {
 	esac
 }
 
-# 优化：提取服务器地址解析逻辑，减少重复代码
+# 优化2：提取服务器地址解析逻辑，减少重复代码，保持原有fallback逻辑
 resolve_server_address() {
     local server="$1"
-    local temp_file="$2"
     
     if echo "$server" | grep -E "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$" >/dev/null; then
         echo "$server"
-    elif echo "$server" | grep -E "^([a-fA-F0-9:]+)$" >/dev/null; then
-        echo "$server"  # IPv6 地址
     else
         resolved=$(resolveip -4 -t 3 "$server" | awk 'NR==1{print}')
         if echo "$resolved" | grep -E "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$" >/dev/null; then
@@ -189,24 +188,20 @@ resolve_server_address() {
 }
 
 start_rules() {
-    log "正在添加防火墙规则..."
-
     # 获取全局服务器地址
     lua /etc_ro/ss/getconfig.lua $GLOBAL_SERVER > /tmp/server.txt
     server=$(cat /tmp/server.txt)
     rm -f /tmp/server.txt
 
-    # 优化：合并IP列表文件操作
+    # 优化3：并行处理IP列表文件操作，减少I/O等待时间
     {
-        cat /etc/storage/ss_ip.sh | grep -v '^!' | grep -v "^$" >$wan_fw_ips
-        cat /etc/storage/ss_wan_ip.sh | grep -v '^!' | grep -v "^$" >$wan_bp_ips
-    } &
+        grep -v -E '^(!|$)' /etc/storage/ss_ip.sh >$wan_fw_ips &
+        grep -v -E '^(!|$)' /etc/storage/ss_wan_ip.sh >$wan_bp_ips &
+        wait
+    }
 
     # 解析服务器地址
     server=$(resolve_server_address "$server")
-
-    # 等待IP列表文件操作完成
-    wait
 
     # 设置默认本地端口
     local_port="1080"
@@ -243,17 +238,17 @@ start_rules() {
         rm -f $lan_fp_ips
         lancon="all"
         lancons="全部IP走代理..."
-        cat /etc/storage/ss_lan_ip.sh | grep -v '^!' | grep -v "^$" >$lan_fp_ips
+        grep -v -E '^(!|$)' /etc/storage/ss_lan_ip.sh >$lan_fp_ips
     elif [ "$lan_con" = "1" ]; then
         rm -f $lan_fp_ips
         lancon="bip"
         lancons="指定 IP 走代理: 请到规则管理页面添加需要走代理的 IP..."
-        cat /etc/storage/ss_lan_bip.sh | grep -v '^!' | grep -v "^$" >$lan_fp_ips
+        grep -v -E '^(!|$)' /etc/storage/ss_lan_bip.sh >$lan_fp_ips
     fi
 
     # 获取 LAN 游戏模式 IP 列表
     rm -f $lan_gm_ips
-    cat /etc/storage/ss_lan_gmip.sh | grep -v '^!' | grep -v "^$" >$lan_gm_ips
+    grep -v -E '^(!|$)' /etc/storage/ss_lan_gmip.sh >$lan_gm_ips
 
     # 设置代理端口
     if [ "$s_dports" = "0" ]; then
@@ -288,14 +283,13 @@ start_redir_tcp() {
 	local bin=$(find_bin $stype)
 	[ ! -f "$bin" ] && log "Main node:Can't find $bin program, can't start!" && return 1
 	
-	# 优化：使用缓存的线程数设置
+	# 优化4：使用缓存的线程数设置
 	if [ "$ss_threads" = "0" ]; then
 		threads=$(cat /proc/cpuinfo | grep 'processor' | wc -l)
 	else
 		threads=$ss_threads
 	fi
 	
-	log "正在启动 $stype 服务器..."
 	case "$stype" in
 	ss | ssr)
 		last_config_file=$CONFIG_FILE
@@ -305,22 +299,18 @@ start_redir_tcp() {
 			usleep 500000
 		done
 		redir_tcp=1
-		log "Shadowsocks/ShadowsocksR $threads 线程启动成功..."
 		;;
 	trojan)
 		for i in $(seq 1 $threads); do
 			run_bin $bin --config $trojan_json_file
 			usleep 500000
 		done
-		log "已运行 $($bin --version 2>&1 | head -1)"
 		;;
 	v2ray)
 		run_bin $bin -config $v2_json_file
-		log "已运行 $($bin -version | head -1)"
 		;;
 	xray)
 		run_bin $bin -config $v2_json_file
-		log "已运行 $($bin -version | head -1)"
 		;;	
 	socks5)
 		for i in $(seq 1 $threads); do
@@ -336,7 +326,6 @@ start_redir_udp() {
 	if [ "$udp_relay_server" != "nil" ]; then
 		redir_udp=1
 		utype=$(nvram get ud_type)
-		log "正在启动 $utype 游戏 UDP 中继服务器..."
 		local bin=$(find_bin $utype)
 		[ ! -f "$bin" ] && log "UDP TPROXY Relay:Can't find $bin program, can't start!" && return 1
 		case "$utype" in
@@ -378,11 +367,9 @@ start_dns_proxy() {
 	pdnsd_enable_flag=$pdnsd_enable
 	dnsserver=$(echo "$tunnel_forward" | awk -F '#' '{print $1}')
 	if [ $pdnsd_enable = 1 ]; then
-	    log "启动 dns2tcp：5353 端口..."
 		ipset add gfwlist $dnsserver 2>/dev/null
 		dns2tcp -L"127.0.0.1#5353" -R"$dnsserver" >/dev/null 2>&1 &
 	elif [ $pdnsd_enable = 0 ]; then
-		log "启动 dnsproxy：5353 端口..."
 		ipset add gfwlist $dnsserver 2>/dev/null
 		dnsproxy -d -p 5353 -R $dnsserver >/dev/null 2>&1 &
 	else
@@ -410,7 +397,6 @@ start_dns() {
 		ipset add gfwlist $dnsserver 2>/dev/null
 		stop_dns_proxy
 		start_dns_proxy
-		log "开始处理 GFWList..."
 		;;
 	oversea)
 		ipset add gfwlist $dnsserver 2>/dev/null
@@ -435,7 +421,6 @@ start_AD() {
 	if [ ! -f "/tmp/adnew.conf" ]; then
 		log "广告过滤功能未开启或者过滤地址失效，网络异常等 ！！！"
 	else
-		log "去广告文件下载成功广告过滤功能已启用..."
 		if [ -f "/tmp/adnew.conf" ]; then
 			check=$(grep -wq "address=" /tmp/adnew.conf)
 	  		if [ ! -n "$check" ] ; then
@@ -463,30 +448,25 @@ start_local() {
 		[ "$type" == "ssr" ] && name="ShadowsocksR"
 		gen_config_file $local_server 3 $socks5_port
 		run_bin $bin -c $CONFIG_SOCK5_FILE -u -f /var/run/ssr-local.pid
-		log "Global_Socks5:$name Started!"
 		;;
 	v2ray)
 		lua /etc_ro/ss/genv2config.lua $local_server tcp 0 $socks5_port >/tmp/v2-ssr-local.json
 		sed -i 's/\\//g' /tmp/v2-ssr-local.json
 		run_bin $bin -config /tmp/v2-ssr-local.json
-		log "Global_Socks5:$($bin -version | head -1) Started!"
 		;;
 	xray)
 		lua /etc_ro/ss/genxrayconfig.lua $local_server tcp 0 $socks5_port >/tmp/v2-ssr-local.json
 		sed -i 's/\\//g' /tmp/v2-ssr-local.json
 		run_bin $bin -config /tmp/v2-ssr-local.json
-		log "Global_Socks5:$($bin -version | head -1) Started!"
 		;;
 	trojan)
 		lua /etc_ro/ss/gentrojanconfig.lua $local_server client $socks5_port >/tmp/trojan-ssr-local.json
 		sed -i 's/\\//g' /tmp/trojan-ssr-local.json
 		run_bin $bin --config /tmp/trojan-ssr-local.json
-		log "Global_Socks5:$($bin --version 2>&1 | head -1) Started!"
 		;;
 	*)
 		[ -e /proc/sys/net/ipv6 ] && local listenip='-i ::'
 		run_bin microsocks $listenip -p $socks5_port ssr-local
-		log "Global_Socks5:$type Started!"
 		;;
 	esac
 	local_enable=1
@@ -575,11 +555,9 @@ ssp_close() {
 clear_iptable() {
 	iptables -t filter -D INPUT -p tcp --dport $socks5_port -j ACCEPT 2>/dev/null
 	iptables -t filter -D INPUT -p tcp --dport $socks5_port -j ACCEPT 2>/dev/null
-	ip6tables -t filter -D INPUT -p tcp --dport $socks5_port -j ACCEPT 2>/dev/null
-	ip6tables -t filter -D INPUT -p tcp --dport $socks5_port -j ACCEPT 2>/dev/null
 }
 
-# 优化：统一进程终止函数，消除重复代码
+# 优化5：统一进程终止函数，消除重复代码
 kill_single_process() {
     local process_name="$1"
     local display_name="$2"
@@ -587,7 +565,6 @@ kill_single_process() {
     
     process_pid=$(pidof "$process_name")
     if [ -n "$process_pid" ]; then
-        log "关闭 $display_name 进程..."
         killall "$process_name" >/dev/null 2>&1
         kill -9 "$process_pid" >/dev/null 2>&1
     fi
