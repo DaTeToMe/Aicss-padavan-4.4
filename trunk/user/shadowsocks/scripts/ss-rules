@@ -9,15 +9,10 @@ FWI=/tmp/shadowsocks_iptables.save
 ADNU=$(iptables -t nat -L  PREROUTING -n --line-number | grep "ADBYBY" |cut -c1-1)
 SSNU=$(($ADNU+1))
 
-# 优化：预定义常用的私有IP段，避免重复定义
+# 优化1：预定义常用的私有IP段，避免重复定义
 PRIVATE_NETWORKS="0.0.0.0/8 10.0.0.0/8 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 224.0.0.0/4 240.0.0.0/4"
 
-# 优化：预缓存配置文件内容
-cache_config_files() {
-    # 缓存域名和IP配置
-    SS_DOM_CONTENT=$(cat /etc/storage/ss_dom.sh 2>/dev/null | grep -v '^!' | grep -v "^$")
-    USS_DOM_CONTENT=$(cat /etc/storage/uss_dom.sh 2>/dev/null | grep -v '^!' | grep -v "^$")
-}
+# 优化2：当需要时才读取配置文件内容，避免不必要的I/O
 
 usage() {
 	cat <<-EOF
@@ -56,12 +51,12 @@ loger() {
 	logger -st ss-rules[$$] -p$1 $2
 }
 
-# 优化：IPv4地址验证函数
+# 优化3：IPv4地址验证函数
 valid_ipv4() {
 	echo "$1" | grep -E "^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$" >/dev/null
 }
 
-# 优化：统一的表清理函数，避免重复代码
+# 优化4：统一的表清理函数，避免重复代码
 flush_table() {
 	local table="$1"
 	local ipt="iptables -t $table"
@@ -79,20 +74,20 @@ flush_table() {
 flush_r() {
 	sed -i '/dnsmasq.dom/d' /etc/storage/dnsmasq/dnsmasq.conf
 	
-	# 优化：并行清理不同表
+	# 优化5：并行清理不同表
 	{
 		flush_table nat &
 		flush_table mangle &
 		wait
 	}
 	
-	# 优化：批量清理路由和ipset
+	# 优化6：批量清理路由和ipset
 	{
 		ip rule del fwmark 0x01/0x01 table 100 2>/dev/null
 		ip route del local 0.0.0.0/0 dev lo table 100 2>/dev/null
 	} &
 	
-	# 优化：批量删除ipset，忽略错误
+	# 优化7：批量删除ipset，忽略错误
 	for ipset_name in ss_spec_lan_ac ss_spec_wan_ac ssr_gen_router china fplan gmlan gfwlist oversea blacklist whitelist; do
 		ipset -X $ipset_name 2>/dev/null &
 	done
@@ -102,7 +97,7 @@ flush_r() {
 	return 0
 }
 
-# 优化：批量创建ipset的函数
+# 优化8：批量创建ipset的函数
 create_ipsets() {
 	# 优化：使用批量ipset命令减少系统调用
 	ipset -exist restore <<-EOF
@@ -116,7 +111,7 @@ create_ipsets() {
 EOF
 }
 
-# 优化：批量添加IP到ipset
+# 优化9：批量添加IP到ipset
 batch_add_ips_to_ipset() {
 	local ipset_name="$1"
 	local ip_list="$2"
@@ -136,7 +131,7 @@ batch_add_ips_to_ipset() {
 	fi
 }
 
-# 优化：运行模式规则生成器
+# 优化10：运行模式规则生成器
 generate_mode_rules() {
 	local mode="$1"
 	local rules=""
@@ -171,10 +166,10 @@ $ipt_n -A SS_SPEC_WAN_AC -m set --match-set china dst -j SS_SPEC_WAN_FW"
 ipset_r() {
 	mkdir -p /tmp/dnsmasq.dom
 	
-	# 优化：批量创建所有需要的ipset
+	# 优化11：批量创建所有需要的ipset
 	create_ipsets
 	
-	# 优化：批量添加游戏模式IP
+	# 优化12：批量添加游戏模式IP
 	batch_add_ips_to_ipset "gmlan" "$LAN_GM_IP"
 	
 	$ipt_n -N SS_SPEC_WAN_AC
@@ -186,7 +181,7 @@ ipset_r() {
 		$(gen_iplist | sed -e "s/^/add ss_spec_wan_ac /")
 EOF
 		
-		# 优化：检查并复制GFW配置文件
+		# 优化13：检查并复制GFW配置文件
 		if [ ! -f "/etc/storage/gfwlist/gfwlist_list.conf" ]; then
 			mkdir -p /etc/storage/gfwlist
 			cp -rf /etc_ro/gfwlist_list.conf /etc/storage/gfwlist/gfwlist_list.conf
@@ -196,7 +191,7 @@ EOF
 		fi
 	fi
 	
-	# 优化：使用函数生成模式规则
+	# 优化14：使用函数生成模式规则
 	mode_rules=$(generate_mode_rules "$RUNMODE")
 	if [ -n "$mode_rules" ]; then
 		echo "$mode_rules" | sh
@@ -204,18 +199,18 @@ EOF
 
 	$ipt_n -I PREROUTING $SSNU -m comment --comment "$TAG" -j SS_SPEC_WAN_AC
 
-	# 优化：使用缓存的内容生成dnsmasq配置
-	if [ -n "$SS_DOM_CONTENT" ]; then
-		echo "$SS_DOM_CONTENT" | awk '{printf("server=/%s/127.0.0.1#5353\nipset=/%s/blacklist\n", $1, $1 )}' > /tmp/dnsmasq.dom/ss_dom.conf
+	# 优化15：只在需要时读取配置文件并生成dnsmasq配置
+	if [ -f "/etc/storage/ss_dom.sh" ]; then
+		grep -v -E '^(!|$)' /etc/storage/ss_dom.sh | awk '{printf("server=/%s/127.0.0.1#5353\nipset=/%s/blacklist\n", $1, $1 )}' > /tmp/dnsmasq.dom/ss_dom.conf
 	fi
-	if [ -n "$USS_DOM_CONTENT" ]; then
-		echo "$USS_DOM_CONTENT" | awk '{printf("ipset=/%s/whitelist\n", $1 )}' > /tmp/dnsmasq.dom/uss_dom.conf
+	if [ -f "/etc/storage/uss_dom.sh" ]; then
+		grep -v -E '^(!|$)' /etc/storage/uss_dom.sh | awk '{printf("ipset=/%s/whitelist\n", $1 )}' > /tmp/dnsmasq.dom/uss_dom.conf
 	fi
 
 	$ipt_n -I SS_SPEC_WAN_AC 2 -m set --match-set blacklist dst -j SS_SPEC_WAN_FW
 	$ipt_n -I SS_SPEC_WAN_AC 2 -m set --match-set whitelist dst -j RETURN
 
-	# 优化：批量添加白名单和黑名单IP
+	# 优化16：批量添加白名单和黑名单IP
 	batch_add_ips_to_ipset "whitelist" "$WAN_BP_IP"
 	batch_add_ips_to_ipset "blacklist" "$WAN_FW_IP"
 	
@@ -228,10 +223,10 @@ EOF
 }
 
 fw_rule() {
-	# 优化：构建防火墙规则的批量命令
+	# 优化17：构建防火墙规则的批量命令
 	local fw_rules="$ipt_n -N SS_SPEC_WAN_FW"
 	
-	# 优化：批量添加私有网络规则
+	# 优化18：批量添加私有网络规则
 	for network in $PRIVATE_NETWORKS; do
 		fw_rules="${fw_rules}
 $ipt_n -A SS_SPEC_WAN_FW -d $network -j RETURN"
@@ -249,7 +244,7 @@ $ipt_n -I SS_SPEC_WAN_FW -m set --match-set fplan src -j RETURN"
 		fi
 	fi
 
-	# 优化：一次性执行所有防火墙规则
+	# 优化19：一次性执行所有防火墙规则
 	echo "$fw_rules" | sh
 
 	$ipt_n -A SS_SPEC_WAN_FW -p tcp $PROXY_PORTS $lanbip \
@@ -270,7 +265,7 @@ ac_rule() {
 	return $?
 }
 
-# 优化：TPROXY规则生成器
+# 优化20：TPROXY规则生成器
 generate_tproxy_rules() {
 	local mode="$1"
 	local rules=""
@@ -312,13 +307,13 @@ tp_rule() {
 	ip rule add fwmark 0x01/0x01 table 100
 	ip route add local 0.0.0.0/0 dev lo table 100
 
-	# 优化：构建基础TPROXY规则
+	# 优化21：构建基础TPROXY规则
 	local base_rules="$ipt_m -N SS_SPEC_TPROXY
 $ipt_m -A SS_SPEC_TPROXY -p udp --dport 80 -j RETURN
 $ipt_m -A SS_SPEC_TPROXY -p udp --dport 443 -j RETURN
 $ipt_m -A SS_SPEC_TPROXY -p udp --dport 53 -j RETURN"
 
-	# 优化：批量添加私有网络RETURN规则
+	# 优化22：批量添加私有网络RETURN规则
 	for network in $PRIVATE_NETWORKS; do
 		base_rules="${base_rules}
 $ipt_m -A SS_SPEC_TPROXY -p udp -d $network -j RETURN"
@@ -327,14 +322,14 @@ $ipt_m -A SS_SPEC_TPROXY -p udp -d $network -j RETURN"
 	base_rules="${base_rules}
 $ipt_m -A SS_SPEC_TPROXY -p udp -d $SERVER -j RETURN"
 	
-	# 优化：一次性执行基础规则
+	# 优化23：一次性执行基础规则
 	echo "$base_rules" | sh
 	
 	if [ "$TPROXY" -ne 1 ]; then
 		$ipt_n -I SS_SPEC_WAN_AC 1 -d $server -j RETURN
 	fi
 
-	# 优化：使用函数生成TPROXY模式规则
+	# 优化24：使用函数生成TPROXY模式规则
 	tproxy_rules=$(generate_tproxy_rules "$RUNMODE")
 	if [ -n "$tproxy_rules" ]; then
 		echo "$tproxy_rules" | sh
@@ -418,9 +413,6 @@ gen_include() {
 EOF
 	return 0
 }
-
-# 初始化配置缓存
-cache_config_files
 
 while getopts ":s:l:S:L:i:e:a:b:w:p:G:D:k:oOuUfgrczh" arg; do
 	case "$arg" in
