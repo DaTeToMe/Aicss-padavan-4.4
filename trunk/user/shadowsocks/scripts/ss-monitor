@@ -11,10 +11,17 @@ pdnsd_process=$7
 chinadnsng_process=0
 
 # 优化1：缓存启动时的配置项，避免循环中重复nvram调用
-sock5_port=$(nvram get socks5_proxy_port)
-ss_cgroups_enabled=$(nvram get ss_cgroups)
-d_type_cached=$(nvram get d_type)
-tunnel_forward_cached=$(nvram get tunnel_forward)
+cache_nvram_vars() {
+    eval $(nvram show | grep -E '^(socks5_proxy_port|ss_cgroups|d_type|tunnel_forward)=' | sed 's/^/CACHED_/')
+    
+    sock5_port=$CACHED_socks5_proxy_port
+    ss_cgroups_enabled=$CACHED_ss_cgroups
+    d_type_cached=$CACHED_d_type
+    tunnel_forward_cached=$CACHED_tunnel_forward
+}
+
+# 初始化缓存
+cache_nvram_vars
 
 # 优化2：缓存服务器IP解析，避免重复文件读取
 if echo $server | grep -E "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$" >/dev/null; then         
@@ -46,32 +53,39 @@ stop_dns_proxy() {
 
 start_dns_proxy() {
 	if [ $pdnsd_process = 1 ]; then
-	    log "启动 dns2tcp：5353 端口..."
 		dns2tcp -L"127.0.0.1#5353" -R"$tunnel_forward_cached" >/dev/null 2>&1 &
 	elif [ $pdnsd_process = 0 ]; then
 		remote_ip=$(echo "$tunnel_forward_cached" | awk -F '#' '{print $1}')
-		log "启动 dnsproxy：5353 端口..."
 		dnsproxy -d -p 5353 -R $remote_ip >/dev/null 2>&1 &
 	else
 		log "DNS解析方式不支持该选项: $pdnsd_process , 建议选择dnsproxy"
 	fi
 }
 
-# 优化3：统一的进程计数函数，保持原有逻辑但减少重复代码
-count_process() {
-	local pattern="$1"
-	ps -w | grep "$pattern" | grep -v grep | wc -l
+# 优化3：统一的进程检查函数，一次性获取所有进程信息
+get_all_process_counts() {
+    # 一次性获取所有相关进程信息，减少系统调用
+    local ps_output=$(ps -w | grep -E "(ssr-retcp|ssr-reudp|ssr-server|$d_type_cached|ssr-local|dnsproxy|dns2tcp)" | grep -v grep)
+    
+    retcp_count=$(echo "$ps_output" | grep -c "ssr-retcp")
+    reudp_count=$(echo "$ps_output" | grep -c "ssr-reudp")
+    current_server_count=$(echo "$ps_output" | grep -c "ssr-server")
+    v2ray_count=$(echo "$ps_output" | grep -c "$d_type_cached")
+    current_local_count=$(echo "$ps_output" | grep -c "ssr-local")
+    dnsproxy_count=$(echo "$ps_output" | grep -c "dnsproxy")
+    dns2tcp_count=$(echo "$ps_output" | grep -c "dns2tcp")
 }
 
 while [ "1" = "1" ]
 do 
 	sleep 10
 	
-	# 优化4：保持原有检查逻辑，但使用函数减少重复代码
+	# 优化4：使用统一函数获取所有进程计数，减少重复的ps调用
+	get_all_process_counts
+	
 	# redir tcp
 	if [ $redir_tcp_process -gt 0 ]; then
-		icount=$(count_process "ssr-retcp")
-		if [ $icount = 0 ]; then
+		if [ $retcp_count = 0 ]; then
 			log "检测到 SS 进程挂掉，正在重启..."
 			/usr/bin/shadowsocks.sh restart 
 			exit 0
@@ -80,8 +94,7 @@ do
 	
 	# redir udp
 	if [ $redir_udp_process -gt 0 ]; then
-		icount=$(count_process "ssr-reudp")
-		if [ $icount = 0 ]; then
+		if [ $reudp_count = 0 ]; then
 			log "检测到 SS 进程挂掉，正在重启..."
 			/usr/bin/shadowsocks.sh restart  
 			exit 0
@@ -90,8 +103,7 @@ do
 	
 	# server
 	if [ $server_process_count -gt 0 ]; then
-		icount=$(count_process "ssr-server")
-		if [ $icount -lt $server_process_count ]; then
+		if [ $current_server_count -lt $server_process_count ]; then
 			log "ssr server error.restart!"
 			killall -q -9 ssr-server 
 			for i in $(seq $server_process_count); do
@@ -106,8 +118,7 @@ do
 		conf="/tmp/v2-redir.json"
 		[ ! -f "/usr/bin/$bin" ] && bin=$(echo -e "v2ray\nxray" | grep -v $bin)
 		[ "$bin" = "trojan" ] && conf="/tmp/tj-redir.json"
-		icount=$(count_process "$bin")
-		if [ $icount -lt $v2ray_process ]; then
+		if [ $v2ray_count -lt $v2ray_process ]; then
 			log "检测到 $bin 进程挂掉，正在重启..."
 			killall -q -9 $bin
 			run_bin /usr/bin/$bin --config $conf
@@ -116,8 +127,7 @@ do
 	
 	# local
 	if [ $local_process -gt 0 ]; then
-		icount=$(count_process "ssr-local")
-		if [ $icount -lt $local_process ]; then
+		if [ $current_local_count -lt $local_process ]; then
 			log "ssr local error.restart!"
 			/usr/bin/shadowsocks.sh restart
 			exit 0
@@ -126,8 +136,7 @@ do
 	
 	# dnsproxy
 	if [ $pdnsd_process = 0 ]; then
-		icount=$(count_process "dnsproxy")
-		if [ $icount = 0 ]; then
+		if [ $dnsproxy_count = 0 ]; then
 			log "dnsproxy is restarted!"
 			stop_dns_proxy
 			start_dns_proxy
@@ -136,8 +145,7 @@ do
 	
 	# dns2tcp
 	if [ $pdnsd_process = 1 ]; then
-		icount=$(count_process "dns2tcp")
-		if [ $icount = 0 ]; then
+		if [ $dns2tcp_count = 0 ]; then
 			log "dns2tcp is restarted!"
 			stop_dns_proxy
 			start_dns_proxy
