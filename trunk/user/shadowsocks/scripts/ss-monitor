@@ -10,25 +10,63 @@ local_process=$6
 pdnsd_process=$7
 chinadnsng_process=0
 
-# 优化1：缓存启动时的配置项，避免循环中重复nvram调用
-cache_nvram_vars() {
-    eval $(nvram show | grep -E '^(socks5_proxy_port|ss_cgroups|d_type|tunnel_forward)=' | sed 's/^/CACHED_/')
+# 监控和重启控制参数
+CHECK_INTERVAL=30         # 进程检查间隔（秒）
+RESTART_COOLDOWN=120      # 重启冷却时间120秒
+MAX_RESTART_COUNT=5       # 最大连续重启次数
+RESET_COUNT_INTERVAL=300  # 5分钟后重置重启计数
+STARTUP_WAIT_TIME=50      # 进程启动等待时间
+DOUBLE_CHECK_INTERVAL=30  # 二次确认间隔
+
+# 状态文件路径（用于状态持久化）
+STATE_DIR="/tmp/ss-monitor-state"
+RESTART_COUNT_FILE="$STATE_DIR/restart_count"
+LAST_RESTART_FILE="$STATE_DIR/last_restart"
+
+# 初始化状态目录
+mkdir -p "$STATE_DIR"
+
+# 读取持久化状态
+load_state() {
+    if [ -f "$RESTART_COUNT_FILE" ]; then
+        restart_count=$(cat "$RESTART_COUNT_FILE")
+    else
+        restart_count=0
+    fi
     
-    sock5_port=$CACHED_socks5_proxy_port
-    ss_cgroups_enabled=$CACHED_ss_cgroups
-    d_type_cached=$CACHED_d_type
-    tunnel_forward_cached=$CACHED_tunnel_forward
+    if [ -f "$LAST_RESTART_FILE" ]; then
+        last_restart_time=$(cat "$LAST_RESTART_FILE")
+    else
+        last_restart_time=0
+    fi
 }
 
-# 初始化缓存
-cache_nvram_vars
+# 保存状态
+save_state() {
+    echo "$restart_count" > "$RESTART_COUNT_FILE"
+    echo "$last_restart_time" > "$LAST_RESTART_FILE"
+}
 
-# 优化2：缓存服务器IP解析，避免重复文件读取
-if echo $server | grep -E "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$" >/dev/null; then         
-	server=${server}
-else
-	server=$(cat /etc/storage/ssr_ip)
-fi
+# 优化1：改进的nvram缓存函数，增加容错性和默认值
+cache_nvram_vars() {
+    # 安全地获取nvram变量，如果失败则使用默认值
+    local nvram_output
+    nvram_output=$(nvram show 2>/dev/null | grep -E '^(socks5_proxy_port|ss_cgroups|d_type|tunnel_forward)=' || true)
+    
+    if [ -n "$nvram_output" ]; then
+        eval $(echo "$nvram_output" | sed 's/^/CACHED_/')
+    fi
+    
+    # 设置变量，如果缓存失败则使用默认值
+    sock5_port=${CACHED_socks5_proxy_port:-"1080"}
+    ss_cgroups_enabled=${CACHED_ss_cgroups:-"0"}
+    d_type_cached=${CACHED_d_type:-"ss"}
+    tunnel_forward_cached=${CACHED_tunnel_forward:-"8.8.8.8#53"}
+}
+
+# 初始化缓存和状态
+cache_nvram_vars
+load_state
 
 log() {
 	logger -t "$NAME" "$@"
@@ -62,91 +100,199 @@ start_dns_proxy() {
 	fi
 }
 
-# 优化3：统一的进程检查函数，一次性获取所有进程信息
+# 优化2：改进的进程检查函数，增加变量有效性检查
 get_all_process_counts() {
-    # 一次性获取所有相关进程信息，减少系统调用
-    local ps_output=$(ps -w | grep -E "(ssr-retcp|ssr-reudp|ssr-server|$d_type_cached|ssr-local|dnsproxy|dns2tcp)" | grep -v grep)
+    # 构建安全的grep模式，确保d_type_cached不为空
+    local grep_pattern="(ssr-retcp|ssr-reudp|ssr-server|ssr-local|dnsproxy|dns2tcp"
+    if [ -n "$d_type_cached" ] && [ "$d_type_cached" != "ss" ] && [ "$d_type_cached" != "ssr" ]; then
+        grep_pattern="${grep_pattern}|${d_type_cached}"
+    fi
+    grep_pattern="${grep_pattern})"
     
-    retcp_count=$(echo "$ps_output" | grep -c "ssr-retcp")
-    reudp_count=$(echo "$ps_output" | grep -c "ssr-reudp")
-    current_server_count=$(echo "$ps_output" | grep -c "ssr-server")
-    v2ray_count=$(echo "$ps_output" | grep -c "$d_type_cached")
-    current_local_count=$(echo "$ps_output" | grep -c "ssr-local")
-    dnsproxy_count=$(echo "$ps_output" | grep -c "dnsproxy")
-    dns2tcp_count=$(echo "$ps_output" | grep -c "dns2tcp")
+    # 一次性获取所有相关进程信息，减少系统调用
+    local ps_output=$(ps -w | grep -E "$grep_pattern" | grep -v grep)
+    
+    retcp_count=$(echo "$ps_output" | grep -c "ssr-retcp" || echo "0")
+    reudp_count=$(echo "$ps_output" | grep -c "ssr-reudp" || echo "0")
+    current_server_count=$(echo "$ps_output" | grep -c "ssr-server" || echo "0")
+    current_local_count=$(echo "$ps_output" | grep -c "ssr-local" || echo "0")
+    dnsproxy_count=$(echo "$ps_output" | grep -c "dnsproxy" || echo "0")
+    dns2tcp_count=$(echo "$ps_output" | grep -c "dns2tcp" || echo "0")
+    
+    # 安全地计算v2ray/xray/trojan进程数
+    if [ -n "$d_type_cached" ] && [ "$d_type_cached" != "ss" ] && [ "$d_type_cached" != "ssr" ]; then
+        v2ray_count=$(echo "$ps_output" | grep -c "$d_type_cached" || echo "0")
+    else
+        v2ray_count=0
+    fi
+}
+
+# 重启控制函数
+can_restart() {
+    local current_time=$(date +%s)
+    local time_diff=$((current_time - last_restart_time))
+    
+    # 检查是否在冷却期内
+    if [ $time_diff -lt $RESTART_COOLDOWN ]; then
+        log "在重启冷却期内，跳过重启 (剩余 $((RESTART_COOLDOWN - time_diff)) 秒)"
+        return 1
+    fi
+    
+    # 检查重启次数
+    if [ $restart_count -ge $MAX_RESTART_COUNT ]; then
+        log "重启次数已达上限 ($MAX_RESTART_COUNT)，停止自动重启。请检查配置或手动处理。"
+        return 1
+    fi
+    
+    return 0
+}
+
+# 重置重启计数
+reset_restart_count_if_needed() {
+    local current_time=$(date +%s)
+    local time_diff=$((current_time - last_restart_time))
+    
+    # 如果距离上次重启超过重置间隔，重置计数
+    if [ $time_diff -gt $RESET_COUNT_INTERVAL ] && [ $restart_count -gt 0 ]; then
+        restart_count=0
+        save_state
+        log "系统稳定运行，重启计数已重置"
+    fi
+}
+
+# 统一的重启函数
+safe_restart_service() {
+    local reason="$1"
+    
+    if ! can_restart; then
+        return 1
+    fi
+    
+    log "检测到问题：$reason，准备重启服务 (第 $((restart_count + 1)) 次)"
+    
+    # 更新重启记录
+    restart_count=$((restart_count + 1))
+    last_restart_time=$(date +%s)
+    save_state
+    
+    # 执行重启
+    /usr/bin/shadowsocks.sh restart
+    
+    # 等待服务启动
+    log "等待服务启动完成..."
+    sleep $STARTUP_WAIT_TIME
+    
+    log "服务重启完成，继续监控"
+    return 0
+}
+
+# 二次确认函数
+double_check_process_status() {
+    log "检测到进程异常，等待 $DOUBLE_CHECK_INTERVAL 秒后进行二次确认..."
+    sleep $DOUBLE_CHECK_INTERVAL
+    get_all_process_counts
 }
 
 while [ "1" = "1" ]
 do 
-	sleep 10
+	sleep $CHECK_INTERVAL
 	
-	# 优化4：使用统一函数获取所有进程计数，减少重复的ps调用
+	# 重置重启计数
+	reset_restart_count_if_needed
+	
+	# 优化3：使用改进的统一函数获取所有进程计数
 	get_all_process_counts
+	
+	# 检查是否需要重启服务的标志
+	need_service_restart=0
+	restart_reason=""
 	
 	# redir tcp
 	if [ $redir_tcp_process -gt 0 ]; then
 		if [ $retcp_count = 0 ]; then
-			log "检测到 SS 进程挂掉，正在重启..."
-			/usr/bin/shadowsocks.sh restart 
-			exit 0
+			need_service_restart=1
+			restart_reason="TCP重定向进程异常"
 		fi
 	fi
 	
 	# redir udp
 	if [ $redir_udp_process -gt 0 ]; then
 		if [ $reudp_count = 0 ]; then
-			log "检测到 SS 进程挂掉，正在重启..."
-			/usr/bin/shadowsocks.sh restart  
-			exit 0
-		fi
-	fi
-	
-	# server
-	if [ $server_process_count -gt 0 ]; then
-		if [ $current_server_count -lt $server_process_count ]; then
-			log "ssr server error.restart!"
-			killall -q -9 ssr-server 
-			for i in $(seq $server_process_count); do
-				run_bin /usr/bin/ssr-server -c /tmp/shadowsocksr_$i.json -u -f /tmp/ssr-server$i.pid   
-			done
-		fi
-	fi
-	
-	# V2RAY/XRAY/TROJAN
-	if [ $v2ray_process -gt 0 ]; then
-		bin="$d_type_cached"
-		conf="/tmp/v2-redir.json"
-		[ ! -f "/usr/bin/$bin" ] && bin=$(echo -e "v2ray\nxray" | grep -v $bin)
-		[ "$bin" = "trojan" ] && conf="/tmp/tj-redir.json"
-		if [ $v2ray_count -lt $v2ray_process ]; then
-			log "检测到 $bin 进程挂掉，正在重启..."
-			killall -q -9 $bin
-			run_bin /usr/bin/$bin --config $conf
+			need_service_restart=1
+			restart_reason="${restart_reason:+$restart_reason, }UDP重定向进程异常"
 		fi
 	fi
 	
 	# local
 	if [ $local_process -gt 0 ]; then
 		if [ $current_local_count -lt $local_process ]; then
-			log "ssr local error.restart!"
-			/usr/bin/shadowsocks.sh restart
-			exit 0
+			need_service_restart=1
+			restart_reason="${restart_reason:+$restart_reason, }本地SOCKS5进程异常"
 		fi
 	fi
 	
-	# dnsproxy
+	# 统一处理需要完整重启的情况
+	if [ $need_service_restart = 1 ]; then
+		double_check_process_status
+		
+		# 重新检查状态
+		need_service_restart=0
+		if [ $redir_tcp_process -gt 0 ] && [ $retcp_count = 0 ]; then
+			need_service_restart=1
+		fi
+		if [ $redir_udp_process -gt 0 ] && [ $reudp_count = 0 ]; then
+			need_service_restart=1
+		fi
+		if [ $local_process -gt 0 ] && [ $current_local_count -lt $local_process ]; then
+			need_service_restart=1
+		fi
+		
+		if [ $need_service_restart = 1 ]; then
+			safe_restart_service "$restart_reason"
+		else
+			log "二次确认后进程状态正常，可能是短暂异常"
+		fi
+	fi
+	
+	# server - 独立重启逻辑
+	if [ $server_process_count -gt 0 ]; then
+		if [ $current_server_count -lt $server_process_count ]; then
+			log "ssr server进程数不足，当前: $current_server_count, 期望: $server_process_count"
+			killall -q -9 ssr-server 
+			for i in $(seq $server_process_count); do
+				run_bin /usr/bin/ssr-server -c /tmp/shadowsocksr_$i.json -u -f /tmp/ssr-server$i.pid   
+			done
+			log "ssr server进程已重启"
+		fi
+	fi
+	
+	# V2RAY/XRAY/TROJAN - 独立重启逻辑
+	if [ $v2ray_process -gt 0 ]; then
+		bin="$d_type_cached"
+		conf="/tmp/v2-redir.json"
+		[ ! -f "/usr/bin/$bin" ] && bin=$(echo -e "v2ray\nxray" | grep -v $bin)
+		[ "$bin" = "trojan" ] && conf="/tmp/tj-redir.json"
+		if [ $v2ray_count -lt $v2ray_process ]; then
+			log "检测到 $bin 进程异常，当前: $v2ray_count, 期望: $v2ray_process"
+			killall -q -9 $bin
+			run_bin /usr/bin/$bin --config $conf
+			log "$bin 进程已重启"
+		fi
+	fi
+	
+	# dnsproxy - 独立重启逻辑
 	if [ $pdnsd_process = 0 ]; then
 		if [ $dnsproxy_count = 0 ]; then
-			log "dnsproxy is restarted!"
+			log "dnsproxy进程异常，正在重启"
 			stop_dns_proxy
 			start_dns_proxy
 		fi
 	fi
 	
-	# dns2tcp
+	# dns2tcp - 独立重启逻辑
 	if [ $pdnsd_process = 1 ]; then
 		if [ $dns2tcp_count = 0 ]; then
-			log "dns2tcp is restarted!"
+			log "dns2tcp进程异常，正在重启"
 			stop_dns_proxy
 			start_dns_proxy
 		fi
