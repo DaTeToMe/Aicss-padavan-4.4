@@ -489,7 +489,31 @@ start_watchcat() {
 	if [ "$ss_watchcat" = "1" ]; then
 		let total_count=server_count+redir_tcp+redir_udp+tunnel_enable+v2ray_enable+local_enable+pdnsd_enable_flag
 		if [ $total_count -gt 0 ]; then
+			# 启动 ss-monitor
 			/usr/bin/ss-monitor $server_count $redir_tcp $redir_udp $tunnel_enable $v2ray_enable $local_enable $pdnsd_enable_flag 0 >/dev/null 2>&1 &
+			monitor_pid=$!
+			
+			# 创建一个简单的守护进程来保护 ss-monitor
+			(
+				# 标记文件，用于控制守护进程的生命周期
+				echo "$$" > /tmp/ss-monitor-guardian.pid
+				
+				while [ -f /tmp/ss-monitor-guardian.pid ]; do
+					# 检查 ss-monitor 是否还在运行
+					if ! kill -0 $monitor_pid 2>/dev/null; then
+						# 检查是否仍然需要运行监控
+						if [ "$(nvram get ss_enable)" = "1" ] && [ "$(nvram get ss_watchcat)" = "1" ]; then
+							log "ss-monitor 进程意外退出，正在重启..."
+							/usr/bin/ss-monitor $server_count $redir_tcp $redir_udp $tunnel_enable $v2ray_enable $local_enable $pdnsd_enable_flag 0 >/dev/null 2>&1 &
+							monitor_pid=$!
+						else
+							# 服务已关闭，退出守护
+							break
+						fi
+					fi
+					sleep 60
+				done
+			) >/dev/null 2>&1 &
 		fi
 	fi
 }
@@ -532,6 +556,14 @@ ssp_start() {
 }
 
 ssp_close() {
+	# 清理守护进程标记文件
+	rm -f /tmp/ss-monitor-guardian.pid
+	# 杀死守护进程
+	if [ -f /tmp/ss-monitor-guardian.pid ]; then
+		guardian_pid=$(cat /tmp/ss-monitor-guardian.pid 2>/dev/null)
+		[ -n "$guardian_pid" ] && kill -9 $guardian_pid 2>/dev/null
+	fi
+	
 	rm -rf /tmp/cdn
 	$SS_RULES -f
 	kill -9 $(ps | grep ss-monitor | grep -v grep | awk '{print $1}') >/dev/null 2>&1
