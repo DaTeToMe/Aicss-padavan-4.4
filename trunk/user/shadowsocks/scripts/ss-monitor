@@ -12,10 +12,10 @@ chinadnsng_process=0
 
 # 监控和重启控制参数
 CHECK_INTERVAL=30         # 进程检查间隔（秒）
-RESTART_COOLDOWN=120      # 重启冷却时间120秒
-MAX_RESTART_COUNT=5       # 最大连续重启次数
+RESTART_COOLDOWN=60      # 重启冷却时间120秒
+MAX_RESTART_COUNT=8       # 最大连续重启次数
 RESET_COUNT_INTERVAL=300  # 5分钟后重置重启计数
-STARTUP_WAIT_TIME=50      # 进程启动等待时间
+STARTUP_WAIT_TIME=60      # 进程启动等待时间
 DOUBLE_CHECK_INTERVAL=30  # 二次确认间隔
 
 # 状态文件路径（用于状态持久化）
