@@ -1,17 +1,3 @@
-/*
- * Copyright 2014, Vietor Liu <vietor.liu at gmail.com>
- * All rights reserved.
- * Use of this source code is governed by a BSD-style license that can be
- * found in the LICENSE file.
- *
- * Redistribution source code with modification from
- * http://ftp.cc.uoc.gr/mirrors/OpenBSD/src/usr.sbin/nsd/rbtree.c
- * Copyright (c) 2001-2006, NLnet Labs. All rights reserved.
- * It's BSD-style license, See detail from
- * http://ftp.cc.uoc.gr/mirrors/OpenBSD/src/usr.sbin/nsd/LICENSE
- *
- */
-
 #include "rbtree.h"
 
 struct rbnode rbnode_null = {
@@ -312,9 +298,8 @@ void rbtree_delete(struct rbtree *rbtree, struct rbnode *to_delete)
 		if(to_delete->right != smright)
 			change_parent_ptr(rbtree, smright->parent, smright, to_delete);
 
+		/* 修复：移除重复的函数调用 */
 		change_child_ptr(smright->left, smright, to_delete);
-		change_child_ptr(smright->left, smright, to_delete);
-		change_child_ptr(smright->right, smright, to_delete);
 		change_child_ptr(smright->right, smright, to_delete);
 		change_child_ptr(to_delete->left, to_delete, smright);
 		if(to_delete->right != smright)
