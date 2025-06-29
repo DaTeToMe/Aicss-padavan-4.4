@@ -1,10 +1,3 @@
-/*
- * Copyright 2014, Vietor Liu <vietor.liu at gmail.com>
- * All rights reserved.
- * Use of this source code is governed by a BSD-style license that can be
- * found in the LICENSE file.
- */
-
 #include "xgetopt.h"
 
 #include <stdio.h>
@@ -63,9 +56,9 @@ int xgetopt(int argc, const char* argv[], const struct xoption* options, int* op
 				++embed_arg;
 			}
 			for(i = 0; options[i].opt != 0 || options[i].name; ++i) {
-				if(strncmp(cur_argv, options[i].name, name_len))
-					continue;
-				if(strlen(options[i].name) == name_len) {
+				if(options[i].name && 
+				   strncmp(cur_argv, options[i].name, name_len) == 0 &&
+				   options[i].name[name_len] == '\0') {
 					match = i;
 					break;
 				}
@@ -90,7 +83,7 @@ int xgetopt(int argc, const char* argv[], const struct xoption* options, int* op
 	}
 
 	if(options[match].val == -1)
-		val = (int)options[i].opt;
+		val = (int)options[match].opt;
 	else
 		val = options[match].val;
 
