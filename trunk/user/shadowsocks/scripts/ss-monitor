@@ -1,13 +1,21 @@
 #!/bin/sh 
 
 NAME=shadowsocksr
-server_process_count=$1
-redir_tcp_process=$2
-redir_udp_process=$3
-tunnel_process=$4
-v2ray_process=$5
-local_process=$6
-pdnsd_process=$7
+
+# 修复：支持从文件读取参数，保持向后兼容
+if [ -f /tmp/ss-monitor-params.conf ]; then
+    # 从参数文件读取（优先）
+    . /tmp/ss-monitor-params.conf
+else
+    # 从命令行参数读取（兼容旧版本）
+    server_process_count=$1
+    redir_tcp_process=$2
+    redir_udp_process=$3
+    tunnel_process=$4
+    v2ray_process=$5
+    local_process=$6
+    pdnsd_process=$7
+fi
 chinadnsng_process=0
 
 # 监控和重启控制参数
@@ -175,15 +183,13 @@ safe_restart_service() {
     last_restart_time=$(date +%s)
     save_state
     
-    # 执行重启
+    # 修复：使用restart命令，依赖shadowsocks.sh中的清理逻辑避免多实例
+    # restart会杀死当前ss-monitor，但shadowsocks.sh会启动新的监控实例
     /usr/bin/shadowsocks.sh restart
     
-    # 等待服务启动
-    log "等待服务启动完成..."
-    sleep $STARTUP_WAIT_TIME
-    
-    log "服务重启完成，继续监控"
-    return 0
+    # 注意：以下代码不会执行，因为当前进程会被restart杀死
+    # 这是正常的，新的ss-monitor实例会接管监控工作
+    exit 0
 }
 
 # 二次确认函数
@@ -193,9 +199,28 @@ double_check_process_status() {
     get_all_process_counts
 }
 
+# 简单的端口连通性检查
+check_proxy_port() {
+    local port=$1
+    local service_name=$2
+    
+    # 使用nc命令检查端口是否可访问
+    nc -z -w 2 127.0.0.1 $port >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        log "$service_name 端口 $port 无响应"
+        return 1
+    fi
+    return 0
+}
+
 while [ "1" = "1" ]
 do 
 	sleep $CHECK_INTERVAL
+	
+	# 修复：重新读取参数文件（如果存在），支持动态配置更新
+	if [ -f /tmp/ss-monitor-params.conf ]; then
+		. /tmp/ss-monitor-params.conf
+	fi
 	
 	# 重置重启计数
 	reset_restart_count_if_needed
@@ -212,6 +237,12 @@ do
 		if [ $retcp_count = 0 ]; then
 			need_service_restart=1
 			restart_reason="TCP重定向进程异常"
+		else
+			# 进程存在时检查端口连通性
+			if ! check_proxy_port 1080 "TCP代理"; then
+				need_service_restart=1
+				restart_reason="${restart_reason:+$restart_reason, }TCP代理端口无响应"
+			fi
 		fi
 	fi
 	
@@ -228,6 +259,14 @@ do
 		if [ $current_local_count -lt $local_process ]; then
 			need_service_restart=1
 			restart_reason="${restart_reason:+$restart_reason, }本地SOCKS5进程异常"
+		else
+			# 进程存在时检查SOCKS5端口（如果配置了）
+			if [ -n "$sock5_port" ] && [ "$sock5_port" != "0" ]; then
+				if ! check_proxy_port $sock5_port "SOCKS5代理"; then
+					need_service_restart=1
+					restart_reason="${restart_reason:+$restart_reason, }SOCKS5端口无响应"
+				fi
+			fi
 		fi
 	fi
 	
@@ -237,14 +276,24 @@ do
 		
 		# 重新检查状态
 		need_service_restart=0
-		if [ $redir_tcp_process -gt 0 ] && [ $retcp_count = 0 ]; then
-			need_service_restart=1
+		if [ $redir_tcp_process -gt 0 ]; then
+			if [ $retcp_count = 0 ]; then
+				need_service_restart=1
+			elif ! check_proxy_port 1080 "TCP代理"; then
+				need_service_restart=1
+			fi
 		fi
 		if [ $redir_udp_process -gt 0 ] && [ $reudp_count = 0 ]; then
 			need_service_restart=1
 		fi
-		if [ $local_process -gt 0 ] && [ $current_local_count -lt $local_process ]; then
-			need_service_restart=1
+		if [ $local_process -gt 0 ]; then
+			if [ $current_local_count -lt $local_process ]; then
+				need_service_restart=1
+			elif [ -n "$sock5_port" ] && [ "$sock5_port" != "0" ]; then
+				if ! check_proxy_port $sock5_port "SOCKS5代理"; then
+					need_service_restart=1
+				fi
+			fi
 		fi
 		
 		if [ $need_service_restart = 1 ]; then
