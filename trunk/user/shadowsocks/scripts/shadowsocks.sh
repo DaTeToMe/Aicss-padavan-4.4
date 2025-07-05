@@ -170,21 +170,60 @@ get_arg_out() {
 	esac
 }
 
-# 优化2：提取服务器地址解析逻辑，减少重复代码，保持原有fallback逻辑
+# 优化2：提取服务器地址解析逻辑，增加重试机制避免DNS解析失败
 resolve_server_address() {
     local server="$1"
+    local retry=0
+    local max_retry=3
+    local resolved=""
     
+    # 如果是IP地址直接返回
     if echo "$server" | grep -E "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$" >/dev/null; then
         echo "$server"
-    else
-        resolved=$(resolveip -4 -t 3 "$server" | awk 'NR==1{print}')
+        return 0
+    fi
+    
+    # DNS解析，最多重试3次
+    while [ $retry -lt $max_retry ]; do
+        resolved=$(resolveip -4 -t 3 "$server" 2>/dev/null | awk 'NR==1{print}')
         if echo "$resolved" | grep -E "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$" >/dev/null; then
+            # 解析成功，缓存结果
+            echo "$resolved" > /etc/storage/ssr_ip
             echo "$resolved"
-        else
-            log "服务器地址解析失败，使用本地缓存或默认地址 8.8.8.8"
-            cat /etc/storage/ssr_ip 2>/dev/null || echo "8.8.8.8"
+            return 0
+        fi
+        retry=$((retry + 1))
+        if [ $retry -lt $max_retry ]; then
+            log "DNS解析失败，第 $retry 次重试..."
+            sleep 1
+        fi
+    done
+    
+    # 全部重试失败，使用缓存
+    if [ -f /etc/storage/ssr_ip ]; then
+        local cached_ip=$(cat /etc/storage/ssr_ip 2>/dev/null)
+        if [ -n "$cached_ip" ]; then
+            log "DNS解析失败，使用缓存地址: $cached_ip"
+            echo "$cached_ip"
+            return 0
         fi
     fi
+    
+    # 缓存也没有，使用备用服务器地址（如果配置了）
+    if [ "$backup_server" != "nil" ]; then
+        log "DNS解析失败，尝试解析备用服务器..."
+        # 注意：这里不递归调用，避免无限循环
+        local backup_resolved=$(resolveip -4 -t 3 "$backup_server" 2>/dev/null | awk 'NR==1{print}')
+        if echo "$backup_resolved" | grep -E "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$" >/dev/null; then
+            log "使用备用服务器地址: $backup_resolved"
+            echo "$backup_resolved"
+            return 0
+        fi
+    fi
+    
+    # 最后的fallback
+    log "所有DNS解析尝试失败，请检查网络连接"
+    return 1
 }
 
 start_rules() {
@@ -200,8 +239,12 @@ start_rules() {
         wait
     }
 
-    # 解析服务器地址
+    # 解析服务器地址，处理解析失败的情况
     server=$(resolve_server_address "$server")
+    if [ -z "$server" ]; then
+        log "无法解析服务器地址，规则设置失败"
+        return 1
+    fi
 
     # 设置默认本地端口
     local_port="1080"
@@ -215,6 +258,13 @@ start_rules() {
         lua /etc_ro/ss/getconfig.lua $udp_relay_server > /tmp/userver.txt
         udp_server=$(cat /tmp/userver.txt)
         rm -f /tmp/userver.txt
+        # 解析UDP服务器地址
+        udp_server=$(resolve_server_address "$udp_server")
+        if [ -z "$udp_server" ]; then
+            log "无法解析UDP服务器地址，跳过UDP设置"
+            ARG_UDP=""
+            udp_server=""
+        fi
     fi
 
     # 设置内网控制规则
@@ -489,31 +539,31 @@ start_watchcat() {
 	if [ "$ss_watchcat" = "1" ]; then
 		let total_count=server_count+redir_tcp+redir_udp+tunnel_enable+v2ray_enable+local_enable+pdnsd_enable_flag
 		if [ $total_count -gt 0 ]; then
-			# 启动 ss-monitor
-			/usr/bin/ss-monitor $server_count $redir_tcp $redir_udp $tunnel_enable $v2ray_enable $local_enable $pdnsd_enable_flag 0 >/dev/null 2>&1 &
-			monitor_pid=$!
+			# 修复：先清理旧的监控进程，避免多个实例
+			kill -9 $(ps | grep ss-monitor | grep -v grep | awk '{print $1}') >/dev/null 2>&1
 			
-			# 创建一个简单的守护进程来保护 ss-monitor
-			(
-				# 标记文件，用于控制守护进程的生命周期
-				echo "$$" > /tmp/ss-monitor-guardian.pid
-				
-				while [ -f /tmp/ss-monitor-guardian.pid ]; do
-					# 检查 ss-monitor 是否还在运行
-					if ! kill -0 $monitor_pid 2>/dev/null; then
-						# 检查是否仍然需要运行监控
-						if [ "$(nvram get ss_enable)" = "1" ] && [ "$(nvram get ss_watchcat)" = "1" ]; then
-							log "ss-monitor 进程意外退出，正在重启..."
-							/usr/bin/ss-monitor $server_count $redir_tcp $redir_udp $tunnel_enable $v2ray_enable $local_enable $pdnsd_enable_flag 0 >/dev/null 2>&1 &
-							monitor_pid=$!
-						else
-							# 服务已关闭，退出守护
-							break
-						fi
-					fi
-					sleep 60
-				done
-			) >/dev/null 2>&1 &
+			# 修复：创建监控参数文件，供监控脚本动态读取
+			cat > /tmp/ss-monitor-params.conf <<EOF
+# ss-monitor 运行参数文件
+# 此文件由 shadowsocks.sh 生成，ss-monitor 会定期读取
+server_count=$server_count
+redir_tcp=$redir_tcp
+redir_udp=$redir_udp
+tunnel_enable=$tunnel_enable
+v2ray_enable=$v2ray_enable
+local_enable=$local_enable
+pdnsd_enable_flag=$pdnsd_enable_flag
+d_type=$(nvram get d_type)
+ud_type=$(nvram get ud_type)
+tunnel_forward=$tunnel_forward
+global_server=$GLOBAL_SERVER
+udp_relay_server=$udp_relay_server
+EOF
+			
+			# 启动 ss-monitor（使用参数保持兼容性）
+			/usr/bin/ss-monitor $server_count $redir_tcp $redir_udp $tunnel_enable $v2ray_enable $local_enable $pdnsd_enable_flag 0 >/dev/null 2>&1 &
+			
+			log "监控进程已启动，PID: $!"
 		fi
 	fi
 }
@@ -556,14 +606,6 @@ ssp_start() {
 }
 
 ssp_close() {
-	# 清理守护进程标记文件
-	rm -f /tmp/ss-monitor-guardian.pid
-	# 杀死守护进程
-	if [ -f /tmp/ss-monitor-guardian.pid ]; then
-		guardian_pid=$(cat /tmp/ss-monitor-guardian.pid 2>/dev/null)
-		[ -n "$guardian_pid" ] && kill -9 $guardian_pid 2>/dev/null
-	fi
-	
 	rm -rf /tmp/cdn
 	$SS_RULES -f
 	kill -9 $(ps | grep ss-monitor | grep -v grep | awk '{print $1}') >/dev/null 2>&1
