@@ -52,7 +52,6 @@ wan_bp_ips="/tmp/whiteip.txt"
 wan_fw_ips="/tmp/blackip.txt"
 lan_fp_ips="/tmp/lan_ip.txt"
 lan_gm_ips="/tmp/lan_gmip.txt"
-socks=""
 args=${args:-""}
 SS_RULES=/usr/bin/ss-rules
 [ -x /etc/storage/ss-rules ] && SS_RULES=/etc/storage/ss-rules
