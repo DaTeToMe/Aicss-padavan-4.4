@@ -1,8 +1,6 @@
 name: Aicss-padavan-4.4
-
 on:
   workflow_dispatch:  # 支持手动触发工作流
-
 jobs:
   build:
     runs-on: ubuntu-latest  # 指定工作流运行的操作系统环境为最新的 Ubuntu
@@ -10,28 +8,26 @@ jobs:
       matrix:
         target: [JCG-AC860M]  # 定义固件构建的目标设备
         toolchain: [mipsel-linux-musl]  # 定义使用的工具链
-
     steps:
       # Step 1: 检出代码仓库的内容
       - uses: actions/checkout@main  # 使用官方的 GitHub Actions 检出代码仓库
-
       # Step 2: 配置 ccache 以加速编译过程
       - uses: hendrikmuhs/ccache-action@main
         with:
           key: ${{ matrix.target }}-${{ matrix.toolchain }}  # ccache 的缓存键与目标设备和工具链绑定
-
       # Step 3: 设置 Go 环境
       - uses: actions/setup-go@main
         with:
           go-version: '1.23.0'  # 指定 Go 的版本为 1.23.0
           check-latest: true  # 确保使用最新的 Go 次版本
           cache: false  # 禁用缓存以避免不一致的问题
-
       # Step 4: 准备构建环境
       - name: Prepare environment  # 设置构建环境的名称
         run: |
           # 更新软件包管理器并安装所需的工具和库
-          sudo apt-get update && sudo apt-get install -y libtool-bin gperf python3-docutils autopoint gettext ccache liblzma-dev libltdl-dev
+          sudo apt-get update > /dev/null 2>&1
+          sudo apt-get install -y libtool-bin gperf python3-docutils autopoint gettext ccache liblzma-dev libltdl-dev > /dev/null 2>&1
+          echo "✅ 依赖安装完成"
           # 将根目录路径保存到环境变量 ROOTDIR
           echo "ROOTDIR=${{ github.workspace }}/trunk" >> $GITHUB_ENV
           # 将编译时间保存为环境变量 Compilation_time，格式为 YYYYMMDD
@@ -40,10 +36,6 @@ jobs:
           echo "CFLAGS=-Os -ffunction-sections -fdata-sections -fno-unwind-tables -fomit-frame-pointer" >> $GITHUB_ENV
           echo "CXXFLAGS=-Os -ffunction-sections -fdata-sections -fno-unwind-tables -fomit-frame-pointer" >> $GITHUB_ENV
           echo "LDFLAGS=" >> $GITHUB_ENV
-          # -Os: 优化代码以减小体积
-          # -ffunction-sections 和 -fdata-sections: 生成独立的代码和数据段
-          # -fomit-frame-pointer: 移除帧指针，进一步减小代码体积
-
       # Step 5: 设置脚本文件的权限
       - name: Set script permissions  # 设置脚本权限的步骤名称
         run: |
@@ -51,20 +43,25 @@ jobs:
           chmod 755 trunk/user/scripts/files/usr/bin/flytrap.sh  # 设置蜜罐脚本权限
           chmod 755 trunk/user/scripts/files/usr/bin/rps-rfs-ops.sh  # 设置优化操作脚本权限
           chmod 755 trunk/user/scripts/files/usr/bin/traffic.sh  # 设置流量脚本操作脚本权限
-          echo "已设置脚本权限为 755"  # 输出确认信息
-
+          echo "✅ 脚本权限设置完成"  # 输出确认信息
       # Step 6: 开始构建固件
       - name: Start build firmware  # 构建固件步骤名称
         run: |
-          # 使用指定的工具链和目标设备进行固件编译
-          make ${{ matrix.target }} TOOLCHAIN=${{ matrix.toolchain }}
-
+          echo "🔨 开始编译 ${{ matrix.target }}..."
+          
+          # 静默执行，只在失败时显示错误
+          if ! make -j$(nproc) ${{ matrix.target }} TOOLCHAIN=${{ matrix.toolchain }} > /dev/null 2>&1; then
+            echo "❌ 编译失败！显示错误信息："
+            make ${{ matrix.target }} TOOLCHAIN=${{ matrix.toolchain }}
+            exit 1
+          fi
+          
+          echo "✅ 编译成功完成！"
       # Step 7: 上传编译生成的固件文件
       - uses: actions/upload-artifact@main
         with:
           name: ${{ matrix.target }}-${{ matrix.toolchain }}  # 设置上传的文件名
           path: trunk/images/*.trx  # 指定上传的固件文件路径
-
       # Step 8: 创建或更新版本发布
       - uses: ncipollo/release-action@main
         with:
@@ -73,7 +70,6 @@ jobs:
           artifacts: trunk/images/*.trx  # 上传的固件文件
           allowUpdates: true  # 允许更新已有标签的发布
           omitBodyDuringUpdate: true  # 更新发布时省略正文内容
-
       # Step 9: 删除旧的工作流运行记录
       - uses: Mattraks/delete-workflow-runs@main
         with:
