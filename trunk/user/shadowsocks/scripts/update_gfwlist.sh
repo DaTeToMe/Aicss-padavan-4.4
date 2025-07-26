@@ -2,7 +2,7 @@
 set -e -o pipefail
 
 # 添加调试开关
-DEBUG=1  # 设置为1启用调试输出,0则禁用
+DEBUG=0  # 设置为1启用调试输出,0则禁用
 
 debug() {
     if [ $DEBUG -eq 1 ]; then
