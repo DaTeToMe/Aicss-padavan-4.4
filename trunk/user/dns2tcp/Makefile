@@ -1,9 +1,9 @@
 include $(ROOTDIR)/rules.mk
 PKG_NAME:=dns2tcp-plus
-PKG_VERSION:=1.2.0
+PKG_VERSION:=1.3.0
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/ITVAPP/dns2tcp-plus/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=5739db6e43be254c523883513a8ada35cf1c7a5e760aa2d8350a1d68feb08d58
+PKG_HASH:=71c7425a001122161411637926bb0574df379254361e07341060ae765b445df2
 include $(INCLUDE_DIR)/package.mk
 $(eval $(call BuildPackage,dns2tcp-plus))
 romfs:
