@@ -407,8 +407,8 @@ start_redir_udp() {
 }
 
 stop_dns_proxy() {
-	pgrep dns2tcp | args kill
-	pgrep dnsproxy | args kill	
+	pgrep dns2tcp | xargs kill 2>/dev/null || true
+	pgrep dnsproxy | xargs kill 2>/dev/null || true
 }
 
 start_dns_proxy() {
