@@ -22,7 +22,7 @@ local function base64Decode(text)
 	end
 end
 
--- 改进的格式检测函数：检查是否需要base64解码
+-- 新增：改进的格式检测函数
 local function needsDecode(content)
 	if not content or #content < 10 then
 		return false  -- 内容太短，不处理
@@ -70,16 +70,13 @@ end
 local function update()
 	local gfwlist = io.open("/tmp/gfwlist_list_origin.conf", "r")
 	local decode = gfwlist:read("*a")
-	
-	-- 使用改进的判断逻辑
+	-- 修改：使用改进的判断逻辑替代原来的 google 检查
 	if needsDecode(decode) then
 		decode = base64Decode(decode)
 	end
-	
-	gfwlist:close()
-	gfwlist = io.open("/tmp/gfwlist_list.conf", "w")
-	gfwlist:write(decode)
-	gfwlist:close()
+		gfwlist:close()
+		gfwlist = io.open("/tmp/gfwlist_list.conf", "w")
+		gfwlist:write(decode)
+		gfwlist:close()
 end
-
 update()
