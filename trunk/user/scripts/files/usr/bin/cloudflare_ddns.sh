@@ -154,7 +154,6 @@ health_check() {
 }
 
 # 改进的网络请求函数，使用curl
-# 改进的网络请求函数，使用curl
 curl_with_timeout() {
     url=$1
     shift
@@ -235,6 +234,9 @@ LOG_FILE="/tmp/cloudflare-ddns.txt"
 # 定义日志文件的最大大小
 MAX_LOG_SIZE=1048576  # 默认设置为 1MB
 
+# 日志写入计数器，用于减少文件大小检查频率
+LOG_WRITE_COUNT=0
+
 # 检查和轮转日志文件
 check_and_rotate_log() {
     if [ -f "$LOG_FILE" ]; then
@@ -256,8 +258,14 @@ log_message() {
     mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null
     # 如果日志文件不存在则创建
     touch "$LOG_FILE" 2>/dev/null
-    # 检查并在必要时轮转日志
-    check_and_rotate_log
+    
+    # 增加计数器，每100次写入检查一次文件大小
+    LOG_WRITE_COUNT=$((LOG_WRITE_COUNT + 1))
+    if [ $LOG_WRITE_COUNT -ge 100 ]; then
+        check_and_rotate_log
+        LOG_WRITE_COUNT=0
+    fi
+    
     # 追加日志消息
     echo "$($DATE '+%Y-%m-%d %H:%M:%S') [$level] $message" >> "$LOG_FILE"
     echo "[$level] $message"
@@ -306,23 +314,33 @@ if ! health_check; then
     exit 1
 fi
 
+# 全局认证参数，避免重复判断
+AUTH_PARAMS=""
+
 # 设置认证头
 set_auth_headers() {
     if [ ! -z "$API_TOKEN" ]; then
-        # 直接存储认证头值，不包含引号
-        AUTH_HEADER="Authorization: Bearer $API_TOKEN"
+        # 设置Token认证参数
+        AUTH_PARAMS="-H \"Authorization: Bearer $API_TOKEN\""
         log_message "信息" "使用 API Token 认证"
         return 0
     elif [ ! -z "$EMAIL" ] && [ ! -z "$API_KEY" ]; then
-        # 直接存储认证头值，不包含引号
-        AUTH_HEADER_EMAIL="X-Auth-Email: $EMAIL"
-        AUTH_HEADER_KEY="X-Auth-Key: $API_KEY"
+        # 设置邮箱/Key认证参数
+        AUTH_PARAMS="-H \"X-Auth-Email: $EMAIL\" -H \"X-Auth-Key: $API_KEY\""
         log_message "信息" "使用邮箱/API Key 认证"
         return 0
     else
         handle_error $E_AUTH "必须提供 API Token 或 邮箱+API Key"
         return 1
     fi
+}
+
+# 统一的API请求函数
+api_request() {
+    local url="$1"
+    shift
+    # 使用eval执行完整的curl命令，包括认证参数
+    eval "curl_with_timeout \"$url\" -H \"Content-Type: application/json\" $AUTH_PARAMS $@"
 }
 
 # 获取当前公网IP
@@ -379,20 +397,7 @@ get_zone_id() {
         response=""
         log_message "调试" "开始获取Zone ID..."
         
-        if [ ! -z "$API_TOKEN" ]; then
-            log_message "调试" "使用API Token发起请求..."
-            response=$(curl_with_timeout "$API_ZONES_URL" \
-                -H "Content-Type: application/json" \
-                -H "$AUTH_HEADER" \
-                -k -v 2>&1)
-        else
-            log_message "调试" "使用Email/API Key发起请求..."
-            response=$(curl_with_timeout "$API_ZONES_URL" \
-                -H "Content-Type: application/json" \
-                -H "$AUTH_HEADER_EMAIL" \
-                -H "$AUTH_HEADER_KEY" \
-                -k -v 2>&1)
-        fi
+        response=$(api_request "$API_ZONES_URL" -k -v 2>&1)
         
         # 调试的时候使用
         # log_message "调试" "API响应: $response"
@@ -424,89 +429,58 @@ get_zone_id() {
     return 1
 }
 
-# 处理重复DNS记录
-handle_duplicate_records() {
-    local response=""
-    local dns_records_url=$(get_dns_records_url "$ZONE_ID")"?type=A&name=$FULL_DOMAIN"
-
-    if [ ! -z "$API_TOKEN" ]; then
-        local records_response=$(curl_with_timeout "$dns_records_url" \
-            -H "Content-Type: application/json" \
-            -H "$AUTH_HEADER")
-    else
-        local records_response=$(curl_with_timeout "$dns_records_url" \
-            -H "Content-Type: application/json" \
-            -H "$AUTH_HEADER_EMAIL" \
-            -H "$AUTH_HEADER_KEY")
-    fi
-    
-    local record_count=$(echo "$records_response" | $GREP -o '"id":"[^"]*"' | wc -l)
-    
-    if [ "$record_count" -gt 1 ]; then
-        log_message "警告" "发现 $record_count 个重复的 $FULL_DOMAIN 记录，正在清理..."
-        
-        # 保留最新的记录，删除其他记录
-        local record_ids=$(echo "$records_response" | $GREP -o '"id":"[^"]*"' | cut -d'"' -f4)
-        local latest_id=$(echo "$record_ids" | head -n1)
-        
-        for id in $record_ids; do
-            if [ "$id" != "$latest_id" ]; then
-                if [ ! -z "$API_TOKEN" ]; then
-                    local delete_response=$(curl_with_timeout "$(get_dns_record_url "$ZONE_ID" "$id")" \
-                        -H "Content-Type: application/json" \
-                        -H "$AUTH_HEADER" \
-                        -X DELETE)
-                else
-                    local delete_response=$(curl_with_timeout "$(get_dns_record_url "$ZONE_ID" "$id")" \
-                        -H "Content-Type: application/json" \
-                        -H "$AUTH_HEADER_EMAIL" \
-                        -H "$AUTH_HEADER_KEY" \
-                        -X DELETE)
-                fi
-                log_message "信息" "已删除重复记录: $id"
-            fi
-        done
-    fi
-}
-
-# 获取当前DNS记录
+# 获取当前DNS记录（集成了重复记录处理）
 get_dns_record() {
     local response=""
     local dns_records_url=$(get_dns_records_url "$ZONE_ID")"?type=A&name=$FULL_DOMAIN"
 
-    if [ ! -z "$API_TOKEN" ]; then
-        response=$(curl_with_timeout "$dns_records_url" \
-            -H "Content-Type: application/json" \
-            -H "$AUTH_HEADER")
-    else
-        response=$(curl_with_timeout "$dns_records_url" \
-            -H "Content-Type: application/json" \
-            -H "$AUTH_HEADER_EMAIL" \
-            -H "$AUTH_HEADER_KEY")
+    # 获取所有A记录
+    response=$(api_request "$dns_records_url")
+    
+    if [ $? -ne 0 ]; then
+        log_message "错误" "获取DNS记录失败"
+        return 1
     fi
     
-    # 处理重复记录
-    handle_duplicate_records
+    # 检查记录数量
+    local record_count=$(echo "$response" | $GREP -o '"id":"[^"]*"' | wc -l)
     
-    # 重新获取记录（确保获取清理后的记录）
-    if [ ! -z "$API_TOKEN" ]; then
-        response=$(curl_with_timeout "$dns_records_url" \
-            -H "Content-Type: application/json" \
-            -H "$AUTH_HEADER")
+    if [ "$record_count" -gt 1 ]; then
+        log_message "警告" "发现 $record_count 个重复的 $FULL_DOMAIN 记录，正在清理..."
+        
+        # 获取所有记录ID
+        local record_ids=$(echo "$response" | $GREP -o '"id":"[^"]*"' | cut -d'"' -f4)
+        local latest_id=$(echo "$record_ids" | head -n1)
+        
+        # 删除多余的记录（保留第一个）
+        for id in $record_ids; do
+            if [ "$id" != "$latest_id" ]; then
+                local delete_response=$(api_request "$(get_dns_record_url "$ZONE_ID" "$id")" -X DELETE)
+                if [ $? -eq 0 ]; then
+                    log_message "信息" "已删除重复记录: $id"
+                else
+                    log_message "警告" "删除记录失败: $id"
+                fi
+            fi
+        done
+        
+        # 使用保留的记录
+        RECORD_ID="$latest_id"
+        RECORD_IP=$(echo "$response" | $GREP -o '"content":"[^"]*"' | head -n1 | cut -d'"' -f4)
     else
-        response=$(curl_with_timeout "$dns_records_url" \
-            -H "Content-Type: application/json" \
-            -H "$AUTH_HEADER_EMAIL" \
-            -H "$AUTH_HEADER_KEY")
+        # 正常情况：只有一个或没有记录
+        RECORD_ID=$(echo "$response" | $GREP -o '"id":"[^"]*"' | head -n1 | cut -d'"' -f4)
+        RECORD_IP=$(echo "$response" | $GREP -o '"content":"[^"]*"' | head -n1 | cut -d'"' -f4)
     fi
-    
-    RECORD_ID=$(echo "$response" | $GREP -o '"id":"[^"]*"' | head -n1 | cut -d'"' -f4)
-    RECORD_IP=$(echo "$response" | $GREP -o '"content":"[^"]*"' | head -n1 | cut -d'"' -f4)
     
     if [ ! -z "$RECORD_ID" ]; then
         log_message "信息" "现有记录ID: $RECORD_ID"
         log_message "信息" "现有记录IP: $RECORD_IP"
+    else
+        log_message "信息" "未找到现有DNS记录，将创建新记录"
     fi
+    
+    return 0
 }
 
 # 更新DNS记录
@@ -516,35 +490,14 @@ update_dns_record() {
         if [ -z "$RECORD_ID" ]; then
             log_message "信息" "正在创建新的DNS记录..."
             local response=""
-            if [ ! -z "$API_TOKEN" ]; then
-                response=$(curl_with_timeout "$(get_dns_records_url "$ZONE_ID")" \
-                    -H "Content-Type: application/json" \
-                    -H "$AUTH_HEADER" \
-                    --data "{\"type\":\"A\",\"name\":\"$HOST\",\"content\":\"$CURRENT_IP\",\"ttl\":1,\"proxied\":false}")
-            else
-                response=$(curl_with_timeout "$(get_dns_records_url "$ZONE_ID")" \
-                    -H "Content-Type: application/json" \
-                    -H "$AUTH_HEADER_EMAIL" \
-                    -H "$AUTH_HEADER_KEY" \
-                    --data "{\"type\":\"A\",\"name\":\"$HOST\",\"content\":\"$CURRENT_IP\",\"ttl\":1,\"proxied\":false}")
-            fi
+            response=$(api_request "$(get_dns_records_url "$ZONE_ID")" \
+                --data "{\"type\":\"A\",\"name\":\"$HOST\",\"content\":\"$CURRENT_IP\",\"ttl\":1,\"proxied\":false}")
         else
             log_message "信息" "正在更新DNS记录..."
             local response=""
-            if [ ! -z "$API_TOKEN" ]; then
-                response=$(curl_with_timeout "$(get_dns_record_url "$ZONE_ID" "$RECORD_ID")" \
-                    -H "Content-Type: application/json" \
-                    -H "$AUTH_HEADER" \
-                    -X PUT \
-                    --data "{\"type\":\"A\",\"name\":\"$HOST\",\"content\":\"$CURRENT_IP\",\"ttl\":1,\"proxied\":false}")
-            else
-                response=$(curl_with_timeout "$(get_dns_record_url "$ZONE_ID" "$RECORD_ID")" \
-                    -H "Content-Type: application/json" \
-                    -H "$AUTH_HEADER_EMAIL" \
-                    -H "$AUTH_HEADER_KEY" \
-                    -X PUT \
-                    --data "{\"type\":\"A\",\"name\":\"$HOST\",\"content\":\"$CURRENT_IP\",\"ttl\":1,\"proxied\":false}")
-            fi
+            response=$(api_request "$(get_dns_record_url "$ZONE_ID" "$RECORD_ID")" \
+                -X PUT \
+                --data "{\"type\":\"A\",\"name\":\"$HOST\",\"content\":\"$CURRENT_IP\",\"ttl\":1,\"proxied\":false}")
         fi
         
         if echo "$response" | $GREP -q '"success":true'; then
