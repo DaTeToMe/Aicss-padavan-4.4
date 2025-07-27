@@ -130,9 +130,18 @@ NAME=shadowsocksr
 GFWLIST_URL="$(nvram get ss_gfwlist_url)"
 debug "获取到的 GFWLIST_URL: $GFWLIST_URL"
 
+# 标记是否为首次日志写入
+LOG_INITIALIZED=0
+
 log() {
     logger -t "$NAME" "$@"
-    echo "$(date "+%Y-%m-%d %H:%M:%S") $@" >> "/tmp/ssrplus.log"
+    # 修改：首次写入使用 >，后续使用 >>
+    if [ $LOG_INITIALIZED -eq 0 ]; then
+        echo "$(date "+%Y-%m-%d %H:%M:%S") $@" > "/tmp/ssrplus.log"
+        LOG_INITIALIZED=1
+    else
+        echo "$(date "+%Y-%m-%d %H:%M:%S") $@" >> "/tmp/ssrplus.log"
+    fi
     debug "$@"  # 同时输出到调试
 }
 
