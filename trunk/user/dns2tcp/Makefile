@@ -9,3 +9,4 @@ $(eval $(call BuildPackage,dns2tcp-plus))
 romfs:
 	$(INSTALL_DIR) $(ROMFSDIR)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/dns2tcp $(ROMFSDIR)/usr/bin/dns2tcp-plus
+	ln -sf dns2tcp-plus $(ROMFSDIR)/usr/bin/dns2tcp
