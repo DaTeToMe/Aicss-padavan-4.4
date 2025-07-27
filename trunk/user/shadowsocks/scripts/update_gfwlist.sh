@@ -38,6 +38,40 @@ try_download_url() {
     return 1
 }
 
+# 新增：完整的下载和验证函数
+try_download_and_process() {
+    local url="$1"
+    
+    # 步骤1：尝试下载
+    if ! try_download_url "$url"; then
+        debug "URL下载失败: $url"
+        return 1
+    fi
+    
+    # 步骤2：执行lua处理
+    debug "执行 lua 脚本处理"
+    lua /etc_ro/ss/gfwupdate.lua
+    local lua_status=$?
+    debug "lua 脚本执行完成,退出状态: $lua_status"
+    
+    # 步骤3：验证处理结果
+    if [ -f /tmp/gfwlist_list.conf ]; then
+        local count=`awk '{print NR}' /tmp/gfwlist_list.conf|tail -n1`
+        debug "统计的行数: $count"
+        if [ $count -gt 1000 ]; then
+            return 0  # 完全成功
+        else
+            debug "处理后行数不足1000: $count"
+        fi
+    else
+        debug "lua处理后文件不存在"
+    fi
+    
+    # 清理失败的临时文件
+    rm -f /tmp/gfwlist_list.conf
+    return 1
+}
+
 NAME=shadowsocksr
 GFWLIST_URL="$(nvram get ss_gfwlist_url)"
 debug "获取到的 GFWLIST_URL: $GFWLIST_URL"
@@ -76,7 +110,7 @@ debug "目录权限: $(ls -ld /etc/storage/gfwlist/ 2>/dev/null || echo '目录�
 }
 
 # 尝试下载文件
-debug "=============== 文件下载 ==============="
+debug "=============== 文件下载和处理 ==============="
 download_success=0
 
 # 首先尝试主URL
@@ -85,7 +119,7 @@ if [ -n "$GFWLIST_URL" ]; then
     debug "DNS 解析测试: $(nslookup $(echo $GFWLIST_URL | awk -F/ '{print $3}') 2>&1)"
     debug "网络连接测试: ping -c 1 $(echo $GFWLIST_URL | awk -F/ '{print $3}') 2>&1"
     
-    if try_download_url "$GFWLIST_URL"; then
+    if try_download_and_process "$GFWLIST_URL"; then
         download_success=1
         log "使用主URL更新成功"
     else
@@ -98,10 +132,12 @@ if [ $download_success -eq 0 ]; then
     debug "开始尝试备用URL列表"
     for url in $BACKUP_URLS; do
         if [ -n "$url" ]; then
-            if try_download_url "$url"; then
+            if try_download_and_process "$url"; then
                 download_success=1
                 log "使用备用URL更新成功: $url"
                 break
+            else
+                log "备用URL处理失败，继续尝试下一个: $url"
             fi
         fi
     done
@@ -119,41 +155,29 @@ if [ $download_success -eq 0 ]; then
     fi
 fi
 
-debug "=============== Lua处理 ==============="
-debug "执行 lua 脚本处理"
-lua /etc_ro/ss/gfwupdate.lua
-lua_status=$?
-debug "lua 脚本执行完成,退出状态: $lua_status"
-
-# 下载成功后的文件处理逻辑
-debug "=============== 文件处理 ==============="
-if [ -f /tmp/gfwlist_list.conf ]; then
-    count=`awk '{print NR}' /tmp/gfwlist_list.conf|tail -n1`
-    debug "统计的行数: $count"
-    if [ $count -gt 1000 ]; then
-        debug "行数大于1000,开始更新文件"
-        rm -f /etc/storage/gfwlist/gfwlist_list.conf
-        mv -f /tmp/gfwlist_list.conf /etc/storage/gfwlist/gfwlist_list.conf
-        debug "执行存储保存"
-        mtd_storage.sh save >/dev/null 2>&1
-        debug "存储保存完成"
-        log "GFWList 更新完成！"
-        echo 3 > /proc/sys/vm/drop_caches
-        debug "清理系统缓存完成"
-        if [ $(nvram get ss_enable) = 1 ]; then
-            debug "=============== 服务重启 ==============="
-            lua /etc_ro/ss/gfwcreate.lua
-            log "正在重启 ShadowSocksR Plus..."
-            /usr/bin/shadowsocks.sh stop
-            /usr/bin/shadowsocks.sh start
-        else
-            debug "SS 未启用,跳过重启"
-        fi
+# 成功处理后的文件操作
+debug "=============== 文件更新 ==============="
+if [ $download_success -eq 1 ] && [ -f /tmp/gfwlist_list.conf ]; then
+    debug "开始更新文件"
+    rm -f /etc/storage/gfwlist/gfwlist_list.conf
+    mv -f /tmp/gfwlist_list.conf /etc/storage/gfwlist/gfwlist_list.conf
+    debug "执行存储保存"
+    mtd_storage.sh save >/dev/null 2>&1
+    debug "存储保存完成"
+    log "GFWList 更新完成！"
+    echo 3 > /proc/sys/vm/drop_caches
+    debug "清理系统缓存完成"
+    if [ $(nvram get ss_enable) = 1 ]; then
+        debug "=============== 服务重启 ==============="
+        lua /etc_ro/ss/gfwcreate.lua
+        log "正在重启 ShadowSocksR Plus..."
+        /usr/bin/shadowsocks.sh stop
+        /usr/bin/shadowsocks.sh start
     else
-        log "GFWList 下载失败,行数不足 1000，请重试！"
+        debug "SS 未启用,跳过重启"
     fi
 else
-    log "GFWList 文件处理失败，文件不存在"
+    log "GFWList 更新失败！"
 fi
 
 # 清理临时文件
