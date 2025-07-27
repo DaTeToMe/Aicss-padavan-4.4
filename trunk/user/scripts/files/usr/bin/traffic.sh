@@ -22,6 +22,10 @@ ARP=$(which arp 2>/dev/null)
 # 缓存数据以减少命令调用
 ARP_CACHE=""
 STATS_CACHE=""
+# 性能优化：添加dnsmasq缓存，避免重复读取文件
+DNSMASQ_CACHE=""
+# 性能优化：JSON内容缓存，避免多次文件I/O
+JSON_CONTENT=""
 
 # 检查必需命令
 check_required_commands() {
@@ -138,8 +142,8 @@ get_device_type() {
 # 设备判断: 修改后的 get_hostname 函数
 get_hostname() {
     local ip="$1"
-    # 从 leases 文件中查找对应 IP 的记录
-    local line=$($GREP "$ip" /tmp/dnsmasq.leases 2>/dev/null)
+    # 性能优化：从缓存中查找，而不是每次读取文件
+    local line=$(echo "$DNSMASQ_CACHE" | $GREP "$ip" 2>/dev/null)
     # 直接用 awk 取第 4 列的第一行
     local hostname=$(echo "$line" | $AWK '{print $4}' 2>/dev/null | head -n 1)
     local mac=$(echo "$line" | $AWK '{print $2}' 2>/dev/null)
@@ -163,7 +167,8 @@ get_hostname() {
 
 # 创建JSON数组开始
 create_json_start() {
-  echo -n "{\"time\":\"$($DATE '+%Y-%m-%d %H:%M:%S')\",\"devices\":[" > $JSON_FILE
+  # 性能优化：使用变量缓存而不是直接写文件
+  JSON_CONTENT="{\"time\":\"$($DATE '+%Y-%m-%d %H:%M:%S')\",\"devices\":["
 }
 
 # 添加设备到JSON
@@ -179,17 +184,19 @@ add_device_json() {
   local hostname=$(get_hostname "$ip")
   
   if [ "$first" != "1" ]; then
-      echo -n "," >> $JSON_FILE
+      JSON_CONTENT="${JSON_CONTENT},"
   fi
   
-  echo -n "{\"ip\":\"$ip\",\"mac\":\"$mac\",\"hostname\":\"$hostname\",\"up_bytes\":$up,\"down_bytes\":$down,\"up_formatted\":\"$(format_bytes $up)\",\"down_formatted\":\"$(format_bytes $down)\"}" >> $JSON_FILE
+  JSON_CONTENT="${JSON_CONTENT}{\"ip\":\"$ip\",\"mac\":\"$mac\",\"hostname\":\"$hostname\",\"up_bytes\":$up,\"down_bytes\":$down,\"up_formatted\":\"$(format_bytes $up)\",\"down_formatted\":\"$(format_bytes $down)\"}"
 }
 
 # 创建JSON数组结束和添加总流量
 create_json_end() {
   local total_up="$1"
   local total_down="$2"
-  echo -n "],\"total\":{\"up_bytes\":$total_up,\"down_bytes\":$total_down,\"up_formatted\":\"$(format_bytes $total_up)\",\"down_formatted\":\"$(format_bytes $total_down)\"}}" >> $JSON_FILE
+  JSON_CONTENT="${JSON_CONTENT}],\"total\":{\"up_bytes\":$total_up,\"down_bytes\":$total_down,\"up_formatted\":\"$(format_bytes $total_up)\",\"down_formatted\":\"$(format_bytes $total_down)\"}}"
+  # 性能优化：最后一次性写入文件
+  echo "$JSON_CONTENT" > $JSON_FILE
 }
 
 # 创建流量统计函数
@@ -203,6 +210,8 @@ traffic_stats() {
   # 获取缓存数据
   ARP_CACHE=$($ARP -n)
   STATS_CACHE=$($IPTABLES -L STATS -nvx)
+  # 性能优化：一次性读取dnsmasq.leases文件
+  DNSMASQ_CACHE=$(cat /tmp/dnsmasq.leases 2>/dev/null)
   
   # 开始创建JSON
   create_json_start
@@ -211,6 +220,8 @@ traffic_stats() {
   TOTAL_UP=0
   TOTAL_DOWN=0
   FIRST=1
+  # 性能优化：标记是否需要更新iptables缓存
+  NEED_UPDATE=0
 
   # 修改IP地址提取方式，处理 "? (192.168.168.xxx)" 格式
   for ip in $(echo "$ARP_CACHE" | $AWK '/\[ether\]/ {gsub(/[()]/,"",$2); print $2}'); do
@@ -218,13 +229,19 @@ traffic_stats() {
       if ! echo "$STATS_CACHE" | $GREP -q "$ip"; then
           $IPTABLES -A STATS -s $ip
           $IPTABLES -A STATS -d $ip
-          # 更新缓存
-          STATS_CACHE=$($IPTABLES -L STATS -nvx)
+          # 性能优化：标记需要更新，而不是立即更新
+          NEED_UPDATE=1
       fi
       
       # 从缓存中获取流量数据
-      UP=$(echo "$STATS_CACHE" | $GREP "$ip" | $HEAD -n 1 | $AWK '{print $2}')
-      DOWN=$(echo "$STATS_CACHE" | $GREP "$ip" | $TAIL -n 1 | $AWK '{print $2}')
+      # 性能优化：使用awk一次性获取上下行流量，减少管道操作
+      local traffic_data=$(echo "$STATS_CACHE" | $AWK -v ip="$ip" '
+          $0 ~ ip && !found_up {up=$2; found_up=1; next}
+          $0 ~ ip && found_up {down=$2; exit}
+          END {print (up?up:0) " " (down?down:0)}
+      ')
+      UP=$(echo "$traffic_data" | $AWK '{print $1}')
+      DOWN=$(echo "$traffic_data" | $AWK '{print $2}')
       
       UP=${UP:-0}
       DOWN=${DOWN:-0}
@@ -237,6 +254,11 @@ traffic_stats() {
       add_device_json "$ip" "$UP" "$DOWN" "$FIRST"
       FIRST=0
   done
+  
+  # 性能优化：如果添加了新规则，在循环结束后更新缓存（为下次执行准备）
+  if [ "$NEED_UPDATE" = "1" ]; then
+      STATS_CACHE=$($IPTABLES -L STATS -nvx)
+  fi
   
   # 完成JSON
   create_json_end "$TOTAL_UP" "$TOTAL_DOWN"
