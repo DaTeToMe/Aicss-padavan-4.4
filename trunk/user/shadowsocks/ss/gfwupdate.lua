@@ -115,10 +115,10 @@ local function chunkedProcess(input_file, output_file)
 		return false, "无法打开文件"
 	end
 	
-	-- 先检查文件大小
-	inf:seek("end")
-	local file_size = inf:tell()
-	inf:seek("set", 0)
+	-- 先检查文件大小 - 修复tell()方法问题
+	local current_pos = inf:seek()      -- 获取当前位置
+	local file_size = inf:seek("end")   -- 移到文件末尾并获取大小
+	inf:seek("set", 0)                  -- 重置到文件开头
 	
 	-- 如果文件较小（<100KB），使用简单方法
 	if file_size < 1024 * 100 then
@@ -188,8 +188,8 @@ local function update()
 	if success then
 		local outf = io.open(output_file, "r")
 		if outf then
-			outf:seek("end")
-			local size = outf:tell()
+			-- 使用seek方法获取文件大小，避免tell()兼容性问题
+			local size = outf:seek("end")
 			outf:close()
 			print(string.format("输出文件大小：%d 字节", size))
 			
@@ -226,10 +226,17 @@ local function safeUpdate()
 		if f then
 			f:close()
 		end
-		return false
+		-- 返回非0状态码表示失败
+		os.exit(1)
 	end
 	
-	return result
+	-- 如果处理失败，返回非0状态码
+	if not result then
+		os.exit(1)
+	end
+	
+	-- 成功返回0
+	os.exit(0)
 end
 
 -- 执行更新
