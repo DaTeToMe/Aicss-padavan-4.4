@@ -356,7 +356,7 @@ del_whitelist() {
     echo "从白名单中删除IP $1 完成。" | tee -a "$log_file"
 }
 
-# 日志记录脚本 - 性能优化版本
+# 日志记录脚本 - 性能优化版本（兼容ash shell）
 log_blocked_ips() {
     manage_log  # 检查日志文件大小
 
@@ -371,19 +371,18 @@ log_blocked_ips() {
         rules_missing=1
     fi
 
-    # 批量检查 IPv4 规则
-    local required_rules=(
-        "-A INPUT -m set --match-set flytrap_blacklist src -j DROP"
-        "-A FORWARD -m set --match-set flytrap_blacklist src -j DROP"
-        "-A OUTPUT -m set --match-set flytrap_blacklist src -j DROP"
-        "-A INPUT -m set --match-set flytrap_whitelist src -j ACCEPT"
-        "-A INPUT -i $wan_name -p tcp -m multiport --dports $trap_ports -m set ! --match-set flytrap_whitelist src -j SET --add-set flytrap_blacklist src"
-        "-A INPUT -p tcp --syn -m connlimit --connlimit-above 20 --connlimit-mask 32 -j DROP"
-        "-A INPUT -p tcp ! --syn -m state --state NEW -j DROP"
+    # 批量检查 IPv4 规则 - 改用循环代替数组
+    local rule
+    for rule in \
+        "-A INPUT -m set --match-set flytrap_blacklist src -j DROP" \
+        "-A FORWARD -m set --match-set flytrap_blacklist src -j DROP" \
+        "-A OUTPUT -m set --match-set flytrap_blacklist src -j DROP" \
+        "-A INPUT -m set --match-set flytrap_whitelist src -j ACCEPT" \
+        "-A INPUT -i $wan_name -p tcp -m multiport --dports $trap_ports -m set ! --match-set flytrap_whitelist src -j SET --add-set flytrap_blacklist src" \
+        "-A INPUT -p tcp --syn -m connlimit --connlimit-above 20 --connlimit-mask 32 -j DROP" \
+        "-A INPUT -p tcp ! --syn -m state --state NEW -j DROP" \
         "-A INPUT -m state --state INVALID -j DROP"
-    )
-
-    for rule in "${required_rules[@]}"; do
+    do
         if ! echo "$iptables_rules" | $GREP -qF "$rule"; then
             rules_missing=1
             break
@@ -396,14 +395,13 @@ log_blocked_ips() {
             rules_missing=1
         else
             local ip6tables_rules=$($IP6TABLES_PATH -S 2>/dev/null)
-            local ipv6_required_rules=(
-                "-A INPUT -m set --match-set flytrap6_blacklist src -j DROP"
-                "-A FORWARD -m set --match-set flytrap6_blacklist src -j DROP"
-                "-A OUTPUT -m set --match-set flytrap6_blacklist src -j DROP"
-                "-A INPUT -i $wan_name -p tcp -m multiport --dports $trap_ports -j SET --add-set flytrap6_blacklist src"
-            )
             
-            for rule in "${ipv6_required_rules[@]}"; do
+            for rule in \
+                "-A INPUT -m set --match-set flytrap6_blacklist src -j DROP" \
+                "-A FORWARD -m set --match-set flytrap6_blacklist src -j DROP" \
+                "-A OUTPUT -m set --match-set flytrap6_blacklist src -j DROP" \
+                "-A INPUT -i $wan_name -p tcp -m multiport --dports $trap_ports -j SET --add-set flytrap6_blacklist src"
+            do
                 if ! echo "$ip6tables_rules" | $GREP -qF "$rule"; then
                     rules_missing=1
                     break
