@@ -11,8 +11,9 @@ debug() {
 }
 
 # 定义备选URL列表
-BACKUP_URLS="https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/gfw.txt
-https://github.moeyy.xyz/https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt
+BACKUP_URLS="https://git.tuxfamily.org/gfwlist/gfwlist.git/plain/gfwlist.txt
+https://bitbucket.org/gfwlist/gfwlist/raw/HEAD/gfwlist.txt
+https://ghfast.top/https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt
 https://gh-proxy.com/https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt
 https://ghproxy.net/https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt
 https://ghproxy.cc/https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt
@@ -24,33 +25,15 @@ try_download_url() {
     local url="$1"
     local processed_url="$url"
     
-    # 智能处理不同的代理服务
-    if echo "$url" | grep -q "ghproxy.net"; then
-        # ghproxy.net 支持 http，只替换协议部分
-        processed_url=$(echo $url | sed 's|^https://|http://|')
-    elif echo "$url" | grep -q "gh-proxy.com"; then
-        # gh-proxy.com 某些版本可能需要特殊处理
-        processed_url=$(echo $url | sed 's|^https://|http://|')
-    elif echo "$url" | grep -q "github.moeyy.xyz"; then
-        # github.moeyy.xyz 保持原样或使用http
-        processed_url=$(echo $url | sed 's|^https://|http://|')
-    elif echo "$url" | grep -q "ghproxy.cc"; then
-        # ghproxy.cc 保持原样或使用http
-        processed_url=$(echo $url | sed 's|^https://|http://|')
-    elif echo "$url" | grep -q "raw.githubusercontent.com"; then
-        # 直接访问GitHub，不使用代理，尝试使用http
-        processed_url=$(echo $url | sed 's|^https://|http://|')
-    fi
+    # 统一使用http避免证书问题
+    processed_url=$(echo $url | sed 's|^https://|http://|')
     
     debug "原始URL: $url"
     debug "处理后URL: $processed_url"
     
-    # 尝试下载，增加超时时间和重试次数
-    if ! curl -4 -s -L -o /tmp/gfwlist_list_origin.conf --connect-timeout 15 --retry 3 --retry-delay 2 "$processed_url"; then
-        debug "curl 命令执行失败"
-        # 使用更详细的curl命令重试一次以获取错误信息
-        debug "详细错误信息："
-        curl -4 -v -L -o /tmp/gfwlist_list_origin.conf --connect-timeout 5 --max-time 10 "$processed_url" 2>&1 | tail -20 | while read line; do debug "$line"; done
+    # 尝试下载，优化超时设置：连接8秒，总超时20秒，重试2次，忽略证书验证
+    if ! curl -4 -s -L -k -o /tmp/gfwlist_list_origin.conf --connect-timeout 5 --max-time 15 --retry 1 --retry-delay 1 "$processed_url"; then
+        debug "curl 命令执行失败，URL: $processed_url"
         return 1
     fi
     
@@ -102,20 +85,28 @@ try_download_and_process() {
     
     # 步骤2：执行lua处理
     debug "执行 lua 脚本处理"
-    lua /etc_ro/ss/gfwupdate.lua
+    # lua /etc_ro/ss/gfwupdate.lua
+    lua /tmp/gfwupdate.lua
     local lua_status=$?
     debug "lua 脚本执行完成,退出状态: $lua_status"
     
-    # 步骤3：验证处理结果
+    # 检查lua执行状态
+    if [ $lua_status -ne 0 ]; then
+        debug "lua脚本执行失败"
+        return 1
+    fi
+    
+    # 步骤3：验证处理结果（只在lua成功后才验证）
     if [ -f /tmp/gfwlist_list.conf ]; then
-        local count=`awk '{print NR}' /tmp/gfwlist_list.conf|tail -n1`
+        # 使用wc -l统计行数，更可靠
+        local count=$(wc -l < /tmp/gfwlist_list.conf 2>/dev/null || echo 0)
         debug "统计的行数: $count"
-        if [ $count -gt 1000 ]; then
+        if [ "$count" -gt 1000 ]; then
             return 0  # 完全成功
         else
             debug "处理后行数不足1000: $count"
             debug "查看处理后文件的前10行："
-            debug "$(head -n 10 /tmp/gfwlist_list.conf)"
+            debug "$(head -n 10 /tmp/gfwlist_list.conf 2>/dev/null || echo '文件为空')"
         fi
     else
         debug "lua处理后文件不存在"
@@ -174,8 +165,6 @@ download_success=0
 # 首先尝试主URL
 if [ -n "$GFWLIST_URL" ]; then
     debug "尝试主URL: $GFWLIST_URL"
-    debug "DNS 解析测试: $(nslookup $(echo $GFWLIST_URL | awk -F/ '{print $3}') 2>&1)"
-    debug "网络连接测试: ping -c 1 $(echo $GFWLIST_URL | awk -F/ '{print $3}') 2>&1"
     
     if try_download_and_process "$GFWLIST_URL"; then
         download_success=1
