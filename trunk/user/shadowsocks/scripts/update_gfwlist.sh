@@ -85,8 +85,7 @@ try_download_and_process() {
     
     # 步骤2：执行lua处理
     debug "执行 lua 脚本处理"
-    # lua /etc_ro/ss/gfwupdate.lua
-    lua /tmp/gfwupdate.lua
+    lua /etc_ro/ss/gfwupdate.lua
     local lua_status=$?
     debug "lua 脚本执行完成,退出状态: $lua_status"
     
