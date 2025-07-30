@@ -30,20 +30,34 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/b
 IPREX4='([0-9]{1,3}\.){3}[0-9]{1,3}(/([0-9]|[1-2][0-9]|3[0-2]))?'
 IPREX6='([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}(([0-9]{1,3}\.){3}[0-9]{1,3})|([0-9a-fA-F]{1,4}:){1,4}:(([0-9]{1,3}\.){3}[0-9]{1,3})'
 
-# 动态获取所需命令路径
-IPSET_PATH=$(which ipset 2>/dev/null)
-IPTABLES_PATH=$(which iptables 2>/dev/null)
-IP6TABLES_PATH=$(which ip6tables 2>/dev/null)
-GREP=$(which grep 2>/dev/null)
-AWK=$(which awk 2>/dev/null)
-SED=$(which sed 2>/dev/null)
-DATE=$(which date 2>/dev/null)
-PS=$(which ps 2>/dev/null)
-RM=$(which rm 2>/dev/null)
-TOUCH=$(which touch 2>/dev/null)
-SLEEP=$(which sleep 2>/dev/null)
-KILL=$(which kill 2>/dev/null)
-STAT=$(which stat 2>/dev/null)
+# 性能优化：批量获取所有命令路径
+init_command_paths() {
+    # 一次性查找所有需要的命令
+    local cmd_list="ipset iptables ip6tables grep awk sed date ps rm touch sleep kill stat"
+    local cmd
+    
+    for cmd in $cmd_list; do
+        local path=$(which $cmd 2>/dev/null)
+        case $cmd in
+            ipset) IPSET_PATH="$path" ;;
+            iptables) IPTABLES_PATH="$path" ;;
+            ip6tables) IP6TABLES_PATH="$path" ;;
+            grep) GREP="$path" ;;
+            awk) AWK="$path" ;;
+            sed) SED="$path" ;;
+            date) DATE="$path" ;;
+            ps) PS="$path" ;;
+            rm) RM="$path" ;;
+            touch) TOUCH="$path" ;;
+            sleep) SLEEP="$path" ;;
+            kill) KILL="$path" ;;
+            stat) STAT="$path" ;;
+        esac
+    done
+}
+
+# 初始化命令路径
+init_command_paths
 
 # 检查必需命令是否存在
 check_required_commands() {
@@ -80,6 +94,25 @@ check_rule_exists() {
     local rule=$2
     $ipt_cmd -C $rule >/dev/null 2>&1
     return $?
+}
+
+# 性能优化：批量检查规则是否存在
+check_rules_batch() {
+    local ipt_cmd=$1
+    shift
+    local rules_output=$($ipt_cmd -S 2>/dev/null)
+    local all_exist=1
+    
+    for rule in "$@"; do
+        # 转换规则格式：从 -C 格式到 -S 输出格式
+        local rule_pattern=$(echo "$rule" | sed 's/^/-A /')
+        if ! echo "$rules_output" | $GREP -qF "$rule_pattern"; then
+            all_exist=0
+            break
+        fi
+    done
+    
+    return $all_exist
 }
 
 # 环境检查函数，检测是否安装了iptables和ip6tables
@@ -145,7 +178,10 @@ manage_log() {
 
 # 创建IP集合（黑名单和白名单）
 create_ipset() {
-    if ! $IPSET_PATH list -n | $GREP -q "flytrap_blacklist"; then
+    # 性能优化：一次性获取所有ipset列表
+    local ipset_names=$($IPSET_PATH list -n 2>/dev/null)
+    
+    if ! echo "$ipset_names" | $GREP -q "flytrap_blacklist"; then
         echo "正在创建flytrap ipset ipv4..." | tee -a "$log_file"
         if [ "$unlock" -gt 0 ]; then
             $IPSET_PATH create flytrap_blacklist hash:net timeout $unlock || { echo "创建flytrap_blacklist失败。" | tee -a "$log_file"; exit 1; }
@@ -156,7 +192,7 @@ create_ipset() {
         echo "flytrap ipset ipv4已经存在。" | tee -a "$log_file"
     fi
 
-    if [ "$trap6" = "yes" ] && ! $IPSET_PATH list -n | $GREP -q flytrap6_blacklist; then
+    if [ "$trap6" = "yes" ] && ! echo "$ipset_names" | $GREP -q flytrap6_blacklist; then
         echo "正在创建flytrap ipset ipv6..." | tee -a "$log_file"
         if [ "$unlock" -gt 0 ]; then
             $IPSET_PATH create flytrap6_blacklist hash:net family inet6 timeout $unlock || { echo "创建flytrap6_blacklist失败。" | tee -a "$log_file"; trap6="no"; }
@@ -168,7 +204,7 @@ create_ipset() {
     fi
 
     # 创建白名单
-    if ! $IPSET_PATH list -n | $GREP -q "flytrap_whitelist"; then
+    if ! echo "$ipset_names" | $GREP -q "flytrap_whitelist"; then
         echo "正在创建flytrap ipset白名单..." | tee -a "$log_file"
         $IPSET_PATH create flytrap_whitelist hash:net || { echo "创建flytrap_whitelist失败。" | tee -a "$log_file"; exit 1; }
     else
@@ -198,15 +234,19 @@ clean_trap() {
     clean_ipt "INPUT.+match-set.+flytrap_blacklist.+DROP" "flytrap_blacklist->INPUT(DROP) IPv4" "4"
     clean_ipt "FORWARD.+match-set.+flytrap_blacklist.+DROP" "flytrap_blacklist->FORWARD(DROP) IPv4" "4"
     clean_ipt "OUTPUT.+match-set.+flytrap_blacklist.+DROP" "flytrap_blacklist->OUTPUT(DROP) IPv4" "4"
-    $IPSET_PATH list -n | $GREP -q "flytrap_blacklist" && $IPSET_PATH destroy flytrap_blacklist
-    $IPSET_PATH list -n | $GREP -q "flytrap_whitelist" && $IPSET_PATH destroy flytrap_whitelist
+    
+    # 性能优化：批量获取ipset列表
+    local ipset_names=$($IPSET_PATH list -n 2>/dev/null)
+    echo "$ipset_names" | $GREP -q "flytrap_blacklist" && $IPSET_PATH destroy flytrap_blacklist
+    echo "$ipset_names" | $GREP -q "flytrap_whitelist" && $IPSET_PATH destroy flytrap_whitelist
+    
     if [ "$trap6" = "yes" ]; then
         clean_ipt "INPUT.+$wan_name.+multiport.+flytrap6_blacklist" "INPUT->flytrap6_blacklist(ipset) IPv6" "6"
         clean_ipt "FORWARD.+$wan_name.+multiport.+flytrap6_blacklist" "INPUT->flytrap6_blacklist(ipset) IPv6" "6"
         clean_ipt "INPUT.+match-set.+flytrap6_blacklist.+DROP" "flytrap6_blacklist->INPUT(DROP) IPv6" "6"
         clean_ipt "FORWARD.+match-set.+flytrap6_blacklist.+DROP" "flytrap6_blacklist->FORWARD(DROP) IPv6" "6"
         clean_ipt "OUTPUT.+match-set.+flytrap6_blacklist.+DROP" "flytrap6_blacklist->OUTPUT(DROP) IPv6" "6"
-        $IPSET_PATH list -n | $GREP -q flytrap6_blacklist && $IPSET_PATH destroy flytrap6_blacklist
+        echo "$ipset_names" | $GREP -q flytrap6_blacklist && $IPSET_PATH destroy flytrap6_blacklist
     fi
 }
 
@@ -316,44 +356,43 @@ del_whitelist() {
     echo "从白名单中删除IP $1 完成。" | tee -a "$log_file"
 }
 
-# 日志记录脚本 - 修改后的版本
+# 日志记录脚本 - 最终修复版本
 log_blocked_ips() {
     manage_log  # 检查日志文件大小
 
     # 检查所有必要的规则是否存在
-    rules_missing=0
-
+    local rules_missing=0
+    
     # 检查 ipset 规则集
-    if ! $IPSET_PATH list -n | $GREP -q "flytrap_blacklist" || \
-       ! $IPSET_PATH list -n | $GREP -q "flytrap_whitelist"; then
+    local ipset_names=$($IPSET_PATH list -n 2>/dev/null)
+    if ! echo "$ipset_names" | $GREP -q "flytrap_blacklist" || \
+       ! echo "$ipset_names" | $GREP -q "flytrap_whitelist"; then
         rules_missing=1
     fi
 
+    # 使用 iptables -C 直接检查规则是否存在
     # 检查 IPv4 规则
-    if ! check_rule_exists "$IPTABLES_PATH" "INPUT -m set --match-set flytrap_blacklist src -j DROP" || \
-       ! check_rule_exists "$IPTABLES_PATH" "FORWARD -m set --match-set flytrap_blacklist src -j DROP" || \
-       ! check_rule_exists "$IPTABLES_PATH" "OUTPUT -m set --match-set flytrap_blacklist src -j DROP" || \
-       ! check_rule_exists "$IPTABLES_PATH" "INPUT -m set --match-set flytrap_whitelist src -j ACCEPT" || \
-       ! check_rule_exists "$IPTABLES_PATH" "INPUT -i $wan_name -p tcp -m multiport --dports $trap_ports -m set ! --match-set flytrap_whitelist src -j SET --add-set flytrap_blacklist src"; then
-        rules_missing=1
-    fi
+    $IPTABLES_PATH -C INPUT -m set --match-set flytrap_blacklist src -j DROP >/dev/null 2>&1 || rules_missing=1
+    $IPTABLES_PATH -C FORWARD -m set --match-set flytrap_blacklist src -j DROP >/dev/null 2>&1 || rules_missing=1
+    $IPTABLES_PATH -C OUTPUT -m set --match-set flytrap_blacklist src -j DROP >/dev/null 2>&1 || rules_missing=1
+    $IPTABLES_PATH -C INPUT -m set --match-set flytrap_whitelist src -j ACCEPT >/dev/null 2>&1 || rules_missing=1
+    $IPTABLES_PATH -C INPUT -i "$wan_name" -p tcp -m multiport --dports "$trap_ports" -m set ! --match-set flytrap_whitelist src -j SET --add-set flytrap_blacklist src >/dev/null 2>&1 || rules_missing=1
+
+    # 检查防护规则
+    $IPTABLES_PATH -C INPUT -p tcp --syn -m connlimit --connlimit-above 20 --connlimit-mask 32 -j DROP >/dev/null 2>&1 || rules_missing=1
+    $IPTABLES_PATH -C INPUT -p tcp ! --syn -m state --state NEW -j DROP >/dev/null 2>&1 || rules_missing=1
+    $IPTABLES_PATH -C INPUT -m state --state INVALID -j DROP >/dev/null 2>&1 || rules_missing=1
 
     # 如果启用了 IPv6，检查 IPv6 规则
     if [ "$trap6" = "yes" ]; then
-        if ! $IPSET_PATH list -n | $GREP -q "flytrap6_blacklist" || \
-           ! check_rule_exists "$IP6TABLES_PATH" "INPUT -m set --match-set flytrap6_blacklist src -j DROP" || \
-           ! check_rule_exists "$IP6TABLES_PATH" "FORWARD -m set --match-set flytrap6_blacklist src -j DROP" || \
-           ! check_rule_exists "$IP6TABLES_PATH" "OUTPUT -m set --match-set flytrap6_blacklist src -j DROP" || \
-           ! check_rule_exists "$IP6TABLES_PATH" "INPUT -i $wan_name -p tcp -m multiport --dports $trap_ports -j SET --add-set flytrap6_blacklist src"; then
+        if ! echo "$ipset_names" | $GREP -q "flytrap6_blacklist"; then
             rules_missing=1
+        else
+            $IP6TABLES_PATH -C INPUT -m set --match-set flytrap6_blacklist src -j DROP >/dev/null 2>&1 || rules_missing=1
+            $IP6TABLES_PATH -C FORWARD -m set --match-set flytrap6_blacklist src -j DROP >/dev/null 2>&1 || rules_missing=1
+            $IP6TABLES_PATH -C OUTPUT -m set --match-set flytrap6_blacklist src -j DROP >/dev/null 2>&1 || rules_missing=1
+            $IP6TABLES_PATH -C INPUT -i "$wan_name" -p tcp -m multiport --dports "$trap_ports" -j SET --add-set flytrap6_blacklist src >/dev/null 2>&1 || rules_missing=1
         fi
-    fi
-
-    # 检查防护规则
-    if ! check_rule_exists "$IPTABLES_PATH" "INPUT -p tcp --syn -m connlimit --connlimit-above 20 --connlimit-mask 32 -j DROP" || \
-       ! check_rule_exists "$IPTABLES_PATH" "INPUT -p tcp ! --syn -m state --state NEW -j DROP" || \
-       ! check_rule_exists "$IPTABLES_PATH" "INPUT -m state --state INVALID -j DROP"; then
-        rules_missing=1
     fi
 
     # 如果发现规则缺失，重新运行完整脚本
@@ -396,15 +435,18 @@ add_ips_to_whitelist() {
 # 列出IP集合中的IP地址
 list_ips() {
     list_type=$1
+    # 性能优化：一次性获取ipset列表
+    local ipset_names=$($IPSET_PATH list -n 2>/dev/null)
+    
     if [ "$list_type" = "4" ]; then
-        if $IPSET_PATH list -n | $GREP -q flytrap_blacklist; then
+        if echo "$ipset_names" | $GREP -q flytrap_blacklist; then
             echo "IPv4 黑名单中的IP:"
             $IPSET_PATH list flytrap_blacklist
         else
             echo "没有找到IPv4黑名单flytrap_blacklist。"
         fi
     elif [ "$list_type" = "6" ]; then
-        if $IPSET_PATH list -n | $GREP -q flytrap6_blacklist; then
+        if echo "$ipset_names" | $GREP -q flytrap6_blacklist; then
             echo "IPv6 黑名单中的IP:"
             $IPSET_PATH list flytrap6_blacklist
         else
@@ -414,7 +456,7 @@ list_ips() {
         echo "未知的IP类型：$list_type"
     fi
     echo "..........................."
-    if $IPSET_PATH list -n | $GREP -q flytrap_whitelist; then
+    if echo "$ipset_names" | $GREP -q flytrap_whitelist; then
         echo "白名单中的IP:"
         $IPSET_PATH list flytrap_whitelist
     else
