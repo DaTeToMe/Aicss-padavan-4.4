@@ -35,6 +35,7 @@ CUT=$(which cut 2>/dev/null)
 CAT=$(which cat 2>/dev/null)
 WC=$(which wc 2>/dev/null)
 BASENAME=$(which basename 2>/dev/null)
+WGET=$(which wget 2>/dev/null)  # 添加 WGET 变量定义，保持一致性
 
 # 通用错误处理函数
 handle_error() {
@@ -112,21 +113,32 @@ check_system_environment() {
 }
 
 # 网络连接检查函数
+# 修改原因：使用 curl 测试 HTTPS 连接更准确，避免 ping 被阻止的误判
 check_network_connectivity() {
-    has_error=0
+    has_warning=0  # 改为警告标记，不阻止程序继续执行
     
-    if ! ping -c 1 -W 3 api.cloudflare.com >/dev/null 2>&1; then
+    # 使用 curl 测试 Cloudflare API 连接，更准确反映实际可用性
+    if ! $CURL -s -k --connect-timeout 5 -o /dev/null -w "%{http_code}" https://api.cloudflare.com/client/v4 >/dev/null 2>&1; then
         log_message "警告" "无法连接到 Cloudflare API"
-        has_error=1
+        has_warning=1
+    else
+        log_message "信息" "Cloudflare API 连接正常"
     fi
     
-    if ! ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1; then
+    # 测试通用网络连接
+    if ! $CURL -s -k --connect-timeout 3 -o /dev/null https://1.1.1.1 >/dev/null 2>&1; then
         log_message "警告" "无法连接到互联网"
-        has_error=1
+        has_warning=1
+    else
+        log_message "信息" "互联网连接正常"
     fi
     
-    [ $has_error -eq 1 ] && return 1
-    return 0
+    # 即使有警告也返回成功，让程序继续尝试
+    # 真正的连接问题会在 API 调用时被捕获
+    if [ $has_warning -eq 1 ]; then
+        log_message "警告" "网络连接可能存在问题，但将继续尝试执行"
+    fi
+    return 0  # 总是返回成功，不阻止执行
 }
 
 # 主健康检查函数
@@ -139,10 +151,8 @@ health_check() {
         has_error=1
     fi
     
-    if ! check_network_connectivity; then
-        log_message "错误" "网络连接检查失败"
-        has_error=1
-    fi
+    # 网络检查改为非阻塞式，即使失败也继续
+    check_network_connectivity
     
     if [ $has_error -eq 0 ]; then
         log_message "信息" "健康检查完成"
@@ -336,47 +346,61 @@ set_auth_headers() {
 }
 
 # 统一的API请求函数
+# 修改原因：避免 eval 导致的 JSON 引号解析问题，改用更安全的参数传递方式
 api_request() {
     local url="$1"
     shift
-    # 使用eval执行完整的curl命令，包括认证参数
-    eval "curl_with_timeout \"$url\" -H \"Content-Type: application/json\" $AUTH_PARAMS $@"
+    
+    # 根据认证方式构建 curl 命令，避免使用 eval
+    if [ ! -z "$API_TOKEN" ]; then
+        curl_with_timeout "$url" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $API_TOKEN" \
+            "$@"
+    else
+        curl_with_timeout "$url" \
+            -H "Content-Type: application/json" \
+            -H "X-Auth-Email: $EMAIL" \
+            -H "X-Auth-Key: $API_KEY" \
+            "$@"
+    fi
 }
 
 # 获取当前公网IP
+# 修改原因：统一使用 curl 替代 wget，保持工具一致性
 get_current_ip() {
     ip=""
     
-    # 尝试从 ip.3322.net 获取IP
+    # 尝试从 ip.3322.net 获取IP（使用 curl 替代 wget）
     if [ -z "$ip" ]; then
-        ip=$(wget -qO- "http://ip.3322.net" | $GREP -E -o '([0-9]+\.){3}[0-9]+' | head -n1)
+        ip=$($CURL -s --connect-timeout 5 "http://ip.3322.net" | $GREP -E -o '([0-9]+\.){3}[0-9]+' | $HEAD -n1)
         if [ ! -z "$ip" ]; then
             log_message "信息" "从 ip.3322.net 获取到IP: $ip"
         else
             log_message "警告" "从 ip.3322.net 获取IP失败，尝试下一个源"
-            sleep 1
+            $SLEEP 1
         fi
     fi
     
-    # 尝试从 ifconfig.me 获取IP
+    # 尝试从 ifconfig.me 获取IP（使用 curl 替代 wget）
     if [ -z "$ip" ]; then
-        ip=$(wget -qO- "http://ifconfig.me/ip" | $GREP -E -o '([0-9]+\.){3}[0-9]+' | head -n1)
+        ip=$($CURL -s --connect-timeout 5 "http://ifconfig.me/ip" | $GREP -E -o '([0-9]+\.){3}[0-9]+' | $HEAD -n1)
         if [ ! -z "$ip" ]; then
             log_message "信息" "从 ifconfig.me 获取到IP: $ip"
         else
             log_message "警告" "从 ifconfig.me 获取IP失败，尝试下一个源"
-            sleep 1
+            $SLEEP 1
         fi
     fi
     
-    # 最后从 ident.me 获取IP
+    # 最后从 ident.me 获取IP（使用 curl 替代 wget）
     if [ -z "$ip" ]; then
-        ip=$(wget -qO- "http://ident.me" | $GREP -E -o '([0-9]+\.){3}[0-9]+' | head -n1)
+        ip=$($CURL -s --connect-timeout 5 "http://ident.me" | $GREP -E -o '([0-9]+\.){3}[0-9]+' | $HEAD -n1)
         if [ ! -z "$ip" ]; then
             log_message "信息" "从 ident.me 获取到IP: $ip"
         else
             log_message "警告" "从 ident.me 获取IP失败"
-            sleep 1
+            $SLEEP 1
         fi
     fi
     
