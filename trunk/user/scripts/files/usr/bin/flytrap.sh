@@ -233,6 +233,28 @@ create_ipset() {
     fi
 }
 
+# 添加常见内网段到白名单（使用预设值，不依赖动态检测）
+add_common_internal_networks() {
+    echo "添加常见内网段到白名单..." | tee -a "$log_file"
+    
+    # 常见的内网段
+    common_internal_networks="192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 127.0.0.0/8"
+    
+    for network in $common_internal_networks; do
+        if ! $IPSET_PATH test flytrap_whitelist $network 2>/dev/null; then
+            if $IPSET_PATH add flytrap_whitelist $network 2>/dev/null; then
+                echo "添加内网段到白名单: $network" | tee -a "$log_file"
+            else
+                echo "警告：添加内网段失败: $network" | tee -a "$log_file"
+            fi
+        else
+            echo "内网段已在白名单中: $network" | tee -a "$log_file"
+        fi
+    done
+    
+    echo "常见内网段添加完成。" | tee -a "$log_file"
+}
+
 # 清理iptables规则
 clean_ipt() {
     rule_exp=$1
@@ -515,8 +537,8 @@ log_blocked_ips() {
     $IPTABLES_PATH -C INPUT -m set --match-set flytrap_whitelist src -j ACCEPT >/dev/null 2>&1 || rules_missing=1
     $IPTABLES_PATH -C INPUT -i "$wan_name" -p tcp -m multiport --dports "$trap_ports" -m set ! --match-set flytrap_whitelist src -j SET --add-set flytrap_blacklist src >/dev/null 2>&1 || rules_missing=1
 
-    # 检查防护规则
-    $IPTABLES_PATH -C INPUT -p tcp --syn -m connlimit --connlimit-above 20 --connlimit-mask 32 -j DROP >/dev/null 2>&1 || rules_missing=1
+    # 检查防护规则（参数需与setup_firewall_rules中的一致）
+    $IPTABLES_PATH -C INPUT -p tcp --syn -m connlimit --connlimit-above 50 --connlimit-mask 32 -j DROP >/dev/null 2>&1 || rules_missing=1
     $IPTABLES_PATH -C INPUT -p tcp ! --syn -m state --state NEW -j DROP >/dev/null 2>&1 || rules_missing=1
     $IPTABLES_PATH -C INPUT -m state --state INVALID -j DROP >/dev/null 2>&1 || rules_missing=1
 
@@ -622,7 +644,7 @@ setup_firewall_rules() {
     # 防止重复创建链
     if ! $IPTABLES_PATH -L syn-flood >/dev/null 2>&1; then
         if $IPTABLES_PATH -N syn-flood 2>&1 | tee -a "$log_file"; then
-            $IPTABLES_PATH -A INPUT -p tcp --syn -m limit --limit 1/s --limit-burst 4 -j RETURN
+            $IPTABLES_PATH -A INPUT -p tcp --syn -m limit --limit 10/s --limit-burst 20 -j RETURN
             $IPTABLES_PATH -A INPUT -p tcp --syn -j DROP
             echo "成功创建Syn-Flood防护规则。" | tee -a "$log_file"
             rules_added=$((rules_added + 1))
@@ -635,8 +657,8 @@ setup_firewall_rules() {
     fi
 
     # 防止碎片攻击
-    if ! $IPTABLES_PATH -C INPUT -f -m limit --limit 100/s --limit-burst 100 -j ACCEPT >/dev/null 2>&1; then
-        if $IPTABLES_PATH -A INPUT -f -m limit --limit 100/s --limit-burst 100 -j ACCEPT 2>&1 && \
+    if ! $IPTABLES_PATH -C INPUT -f -m limit --limit 500/s --limit-burst 500 -j ACCEPT >/dev/null 2>&1; then
+        if $IPTABLES_PATH -A INPUT -f -m limit --limit 500/s --limit-burst 500 -j ACCEPT 2>&1 && \
            $IPTABLES_PATH -A INPUT -f -j DROP 2>&1; then
             echo "成功添加碎片攻击防护规则。" | tee -a "$log_file"
             rules_added=$((rules_added + 1))
@@ -686,9 +708,9 @@ setup_firewall_rules() {
         echo "DOS攻击规则已存在。" | tee -a "$log_file"
     fi
 
-    # 防止SYN-Flood攻击的规则
-    if ! $IPTABLES_PATH -C INPUT -p tcp --syn -m connlimit --connlimit-above 20 --connlimit-mask 32 -j DROP >/dev/null 2>&1; then
-        if $IPTABLES_PATH -A INPUT -p tcp --syn -m connlimit --connlimit-above 20 --connlimit-mask 32 -j DROP 2>&1; then
+    # 防止SYN-Flood攻击的规则（调整连接限制从20改为50）
+    if ! $IPTABLES_PATH -C INPUT -p tcp --syn -m connlimit --connlimit-above 50 --connlimit-mask 32 -j DROP >/dev/null 2>&1; then
+        if $IPTABLES_PATH -A INPUT -p tcp --syn -m connlimit --connlimit-above 50 --connlimit-mask 32 -j DROP 2>&1; then
             echo "成功添加SYN-Flood攻击防护规则。" | tee -a "$log_file"
             rules_added=$((rules_added + 1))
         else
@@ -699,20 +721,21 @@ setup_firewall_rules() {
         echo "SYN-Flood攻击的规则已存在。" | tee -a "$log_file"
     fi
 
-    # 防止伪装攻击
+    # 防止伪装攻击（关键修改：移除内网段阻止，只阻止真正的恶意IP段）
     if ! $IPTABLES_PATH -C INPUT -s 224.0.0.0/3 -j DROP >/dev/null 2>&1; then
         local spoof_rules_ok=1
+        # 只阻止明显的恶意IP段，不阻止内网段
         $IPTABLES_PATH -A INPUT -s 224.0.0.0/3 -j DROP 2>&1 || spoof_rules_ok=0
         $IPTABLES_PATH -A INPUT -s 169.254.0.0/16 -j DROP 2>&1 || spoof_rules_ok=0
-        $IPTABLES_PATH -A INPUT -s 172.16.0.0/12 -j DROP 2>&1 || spoof_rules_ok=0
         $IPTABLES_PATH -A INPUT -s 192.0.2.0/24 -j DROP 2>&1 || spoof_rules_ok=0
-        $IPTABLES_PATH -A INPUT -s 10.0.0.0/8 -j DROP 2>&1 || spoof_rules_ok=0
         $IPTABLES_PATH -A INPUT -s 0.0.0.0/8 -j DROP 2>&1 || spoof_rules_ok=0
         $IPTABLES_PATH -A INPUT -s 240.0.0.0/5 -j DROP 2>&1 || spoof_rules_ok=0
         $IPTABLES_PATH -A INPUT -s 127.0.0.0/8 ! -i lo -j DROP 2>&1 || spoof_rules_ok=0
+        # 已移除对内网段的阻止：10.0.0.0/8, 172.16.0.0/12
+        # 注意：192.168.0.0/16 在原脚本中本来就没有被阻止
         
         if [ $spoof_rules_ok -eq 1 ]; then
-            echo "成功添加伪装攻击防护规则。" | tee -a "$log_file"
+            echo "成功添加伪装攻击防护规则（已排除内网段）。" | tee -a "$log_file"
             rules_added=$((rules_added + 1))
         else
             echo "警告：部分伪装攻击规则添加失败。" | tee -a "$log_file"
@@ -873,6 +896,9 @@ if ! create_ipset; then
     echo "错误：创建IP集合失败，脚本终止。" | tee -a "$log_file"
     exit 1
 fi
+
+# 添加常见内网段到白名单（使用预设值，保证兼容性）
+add_common_internal_networks
 
 # 添加防火墙规则
 if ! add_trap; then
