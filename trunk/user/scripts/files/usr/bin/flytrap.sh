@@ -20,6 +20,8 @@ sh_file="/usr/bin"  # 脚本安装路径
 max_log_size=$((3*1024*1024))  # 最大日志文件大小，默认3MB
 # 白名单的IP地址，可以通过脚本参数动态添加和删除
 whitelist_ips="107.149.214.25,107.148.94.42"  # 示例白名单IP，多个IP用逗号分隔
+# 连接限制配置（新增配置项）
+conn_limit="150"  # 单个IP的最大并发连接数限制，建议值：家庭100-150，企业200-250
 
 # 可自定义的选项结束
 
@@ -336,10 +338,23 @@ clean_trap() {
 add_trap() {
     local rule_added=0
     
-    # 添加白名单规则，确保插入到INPUT链的第一个位置
+    # ===== 关键修改：在最开始添加状态跟踪规则，确保内网通信不受限制 =====
+    # 优先放行已建立的连接（这样内网主动发起的连接完全不受限制）
+    if ! $IPTABLES_PATH -C INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1; then
+        echo "添加状态跟踪规则以保护内网通信..." | tee -a "$log_file"
+        $IPTABLES_PATH -I INPUT 1 -m state --state ESTABLISHED,RELATED -j ACCEPT 2>&1 | tee -a "$log_file"
+        echo "成功添加INPUT状态跟踪规则。" | tee -a "$log_file"
+    fi
+    
+    if ! $IPTABLES_PATH -C FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1; then
+        $IPTABLES_PATH -I FORWARD 1 -m state --state ESTABLISHED,RELATED -j ACCEPT 2>&1 | tee -a "$log_file"
+        echo "成功添加FORWARD状态跟踪规则。" | tee -a "$log_file"
+    fi
+    
+    # 添加白名单规则，确保插入到INPUT链的第一个位置（在状态跟踪之后）
     if ! $IPTABLES_PATH -C INPUT -m set --match-set flytrap_whitelist src -j ACCEPT >/dev/null 2>&1; then
         echo "添加flytrap_whitelist白名单规则..." | tee -a "$log_file"
-        if $IPTABLES_PATH -I INPUT 1 -m set --match-set flytrap_whitelist src -j ACCEPT 2>&1 | tee -a "$log_file"; then
+        if $IPTABLES_PATH -I INPUT 2 -m set --match-set flytrap_whitelist src -j ACCEPT 2>&1 | tee -a "$log_file"; then
             echo "成功添加白名单ACCEPT规则。" | tee -a "$log_file"
             rule_added=1
         else
@@ -348,7 +363,7 @@ add_trap() {
         fi
         
         # 添加RETURN规则，确保白名单IP直接跳过后续规则
-        if $IPTABLES_PATH -I INPUT 2 -m set --match-set flytrap_whitelist src -j RETURN 2>&1 | tee -a "$log_file"; then
+        if $IPTABLES_PATH -I INPUT 3 -m set --match-set flytrap_whitelist src -j RETURN 2>&1 | tee -a "$log_file"; then
             echo "成功添加白名单RETURN规则。" | tee -a "$log_file"
         else
             echo "警告：无法添加白名单跳过规则。" | tee -a "$log_file"
@@ -414,6 +429,17 @@ add_trap() {
 
     # IPv6 规则部分
     if [ "$trap6" = "yes" ]; then
+        # IPv6状态跟踪规则
+        if ! $IP6TABLES_PATH -C INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1; then
+            $IP6TABLES_PATH -I INPUT 1 -m state --state ESTABLISHED,RELATED -j ACCEPT 2>&1 | tee -a "$log_file"
+            echo "成功添加IPv6 INPUT状态跟踪规则。" | tee -a "$log_file"
+        fi
+        
+        if ! $IP6TABLES_PATH -C FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1; then
+            $IP6TABLES_PATH -I FORWARD 1 -m state --state ESTABLISHED,RELATED -j ACCEPT 2>&1 | tee -a "$log_file"
+            echo "成功添加IPv6 FORWARD状态跟踪规则。" | tee -a "$log_file"
+        fi
+        
         if ! $IP6TABLES_PATH -C INPUT -m set --match-set flytrap6_blacklist src -j DROP >/dev/null 2>&1; then
             echo "添加flytrap6_blacklist规则..." | tee -a "$log_file"
             
@@ -537,10 +563,10 @@ log_blocked_ips() {
     $IPTABLES_PATH -C INPUT -m set --match-set flytrap_whitelist src -j ACCEPT >/dev/null 2>&1 || rules_missing=1
     $IPTABLES_PATH -C INPUT -i "$wan_name" -p tcp -m multiport --dports "$trap_ports" -m set ! --match-set flytrap_whitelist src -j SET --add-set flytrap_blacklist src >/dev/null 2>&1 || rules_missing=1
 
-    # 检查防护规则（参数需与setup_firewall_rules中的一致）
-    $IPTABLES_PATH -C INPUT -p tcp --syn -m connlimit --connlimit-above 50 --connlimit-mask 32 -j DROP >/dev/null 2>&1 || rules_missing=1
-    $IPTABLES_PATH -C INPUT -p tcp ! --syn -m state --state NEW -j DROP >/dev/null 2>&1 || rules_missing=1
-    $IPTABLES_PATH -C INPUT -m state --state INVALID -j DROP >/dev/null 2>&1 || rules_missing=1
+    # 检查防护规则（参数需与setup_firewall_rules中的一致，使用变量$conn_limit）
+    $IPTABLES_PATH -C INPUT -i "$wan_name" -p tcp --syn -m connlimit --connlimit-above $conn_limit --connlimit-mask 32 -j DROP >/dev/null 2>&1 || rules_missing=1
+    $IPTABLES_PATH -C INPUT -i "$wan_name" -p tcp ! --syn -m state --state NEW -j DROP >/dev/null 2>&1 || rules_missing=1
+    $IPTABLES_PATH -C INPUT -i "$wan_name" -m state --state INVALID -j DROP >/dev/null 2>&1 || rules_missing=1
 
     # 如果启用了 IPv6，检查 IPv6 规则
     if [ "$trap6" = "yes" ]; then
@@ -638,15 +664,18 @@ list_ips() {
 # 配置防火墙的防护规则
 setup_firewall_rules() {
     echo "设置防火墙规则..." | tee -a "$log_file"
+    echo "注意：所有防护规则只应用于WAN接口($wan_name)，不影响内网通信" | tee -a "$log_file"
+    echo "单IP并发连接限制：$conn_limit" | tee -a "$log_file"
     local rules_added=0
     local rules_failed=0
 
     # 防止重复创建链
     if ! $IPTABLES_PATH -L syn-flood >/dev/null 2>&1; then
         if $IPTABLES_PATH -N syn-flood 2>&1 | tee -a "$log_file"; then
-            $IPTABLES_PATH -A INPUT -p tcp --syn -m limit --limit 10/s --limit-burst 20 -j RETURN
-            $IPTABLES_PATH -A INPUT -p tcp --syn -j DROP
-            echo "成功创建Syn-Flood防护规则。" | tee -a "$log_file"
+            # ===== 关键修改：SYN-Flood规则只限制WAN口 =====
+            $IPTABLES_PATH -A INPUT -i "$wan_name" -p tcp --syn -m limit --limit 10/s --limit-burst 20 -j RETURN
+            $IPTABLES_PATH -A INPUT -i "$wan_name" -p tcp --syn -j DROP
+            echo "成功创建Syn-Flood防护规则（仅WAN）。" | tee -a "$log_file"
             rules_added=$((rules_added + 1))
         else
             echo "错误：创建Syn-Flood规则失败。" | tee -a "$log_file"
@@ -656,11 +685,13 @@ setup_firewall_rules() {
         echo "Syn-Flood规则已存在。" | tee -a "$log_file"
     fi
 
-    # 防止碎片攻击
-    if ! $IPTABLES_PATH -C INPUT -f -m limit --limit 500/s --limit-burst 500 -j ACCEPT >/dev/null 2>&1; then
-        if $IPTABLES_PATH -A INPUT -f -m limit --limit 500/s --limit-burst 500 -j ACCEPT 2>&1 && \
-           $IPTABLES_PATH -A INPUT -f -j DROP 2>&1; then
-            echo "成功添加碎片攻击防护规则。" | tee -a "$log_file"
+    # ===== 关键修改：所有防护规则都加上 -i "$wan_name" 限制 =====
+    
+    # 防止碎片攻击（仅限WAN口）
+    if ! $IPTABLES_PATH -C INPUT -i "$wan_name" -f -m limit --limit 500/s --limit-burst 500 -j ACCEPT >/dev/null 2>&1; then
+        if $IPTABLES_PATH -A INPUT -i "$wan_name" -f -m limit --limit 500/s --limit-burst 500 -j ACCEPT 2>&1 && \
+           $IPTABLES_PATH -A INPUT -i "$wan_name" -f -j DROP 2>&1; then
+            echo "成功添加碎片攻击防护规则（仅WAN）。" | tee -a "$log_file"
             rules_added=$((rules_added + 1))
         else
             echo "错误：添加碎片攻击规则失败。" | tee -a "$log_file"
@@ -670,11 +701,11 @@ setup_firewall_rules() {
         echo "碎片攻击规则已存在。" | tee -a "$log_file"
     fi
 
-    # 防止ICMP（Ping）攻击
-    if ! $IPTABLES_PATH -C INPUT -p icmp --icmp-type echo-request -m limit --limit 1/s --limit-burst 10 -j ACCEPT >/dev/null 2>&1; then
-        if $IPTABLES_PATH -A INPUT -p icmp --icmp-type echo-request -m limit --limit 1/s --limit-burst 10 -j ACCEPT 2>&1 && \
-           $IPTABLES_PATH -A INPUT -p icmp --icmp-type echo-request -j DROP 2>&1; then
-            echo "成功添加ICMP攻击防护规则。" | tee -a "$log_file"
+    # 防止ICMP（Ping）攻击（仅限WAN口）
+    if ! $IPTABLES_PATH -C INPUT -i "$wan_name" -p icmp --icmp-type echo-request -m limit --limit 1/s --limit-burst 10 -j ACCEPT >/dev/null 2>&1; then
+        if $IPTABLES_PATH -A INPUT -i "$wan_name" -p icmp --icmp-type echo-request -m limit --limit 1/s --limit-burst 10 -j ACCEPT 2>&1 && \
+           $IPTABLES_PATH -A INPUT -i "$wan_name" -p icmp --icmp-type echo-request -j DROP 2>&1; then
+            echo "成功添加ICMP攻击防护规则（仅WAN）。" | tee -a "$log_file"
             rules_added=$((rules_added + 1))
         else
             echo "错误：添加ICMP攻击规则失败。" | tee -a "$log_file"
@@ -684,21 +715,21 @@ setup_firewall_rules() {
         echo "ICMP攻击规则已存在。" | tee -a "$log_file"
     fi
     
-    # 防止DOS攻击
-    if ! $IPTABLES_PATH -C INPUT -p tcp ! --syn -m state --state NEW -j DROP >/dev/null 2>&1; then
+    # 防止DOS攻击（仅限WAN口）
+    if ! $IPTABLES_PATH -C INPUT -i "$wan_name" -p tcp ! --syn -m state --state NEW -j DROP >/dev/null 2>&1; then
         local dos_rules_ok=1
-        $IPTABLES_PATH -A INPUT -p tcp ! --syn -m state --state NEW -j DROP 2>&1 || dos_rules_ok=0
-        $IPTABLES_PATH -A INPUT -p tcp --tcp-flags ALL NONE -j DROP 2>&1 || dos_rules_ok=0
-        $IPTABLES_PATH -A INPUT -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP 2>&1 || dos_rules_ok=0
-        $IPTABLES_PATH -A INPUT -p tcp --tcp-flags SYN,RST SYN,RST -j DROP 2>&1 || dos_rules_ok=0
-        $IPTABLES_PATH -A INPUT -p tcp --tcp-flags FIN,RST FIN,RST -j DROP 2>&1 || dos_rules_ok=0
-        $IPTABLES_PATH -A INPUT -p tcp --tcp-flags ACK,FIN FIN -j DROP 2>&1 || dos_rules_ok=0
-        $IPTABLES_PATH -A INPUT -p tcp --tcp-flags ACK,PSH PSH -j DROP 2>&1 || dos_rules_ok=0
-        $IPTABLES_PATH -A INPUT -p tcp --tcp-flags ACK,URG URG -j DROP 2>&1 || dos_rules_ok=0
-        $IPTABLES_PATH -A INPUT -p tcp --tcp-flags ALL SYN,FIN,PSH,URG -j DROP 2>&1 || dos_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -p tcp ! --syn -m state --state NEW -j DROP 2>&1 || dos_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -p tcp --tcp-flags ALL NONE -j DROP 2>&1 || dos_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP 2>&1 || dos_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -p tcp --tcp-flags SYN,RST SYN,RST -j DROP 2>&1 || dos_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -p tcp --tcp-flags FIN,RST FIN,RST -j DROP 2>&1 || dos_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -p tcp --tcp-flags ACK,FIN FIN -j DROP 2>&1 || dos_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -p tcp --tcp-flags ACK,PSH PSH -j DROP 2>&1 || dos_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -p tcp --tcp-flags ACK,URG URG -j DROP 2>&1 || dos_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -p tcp --tcp-flags ALL SYN,FIN,PSH,URG -j DROP 2>&1 || dos_rules_ok=0
         
         if [ $dos_rules_ok -eq 1 ]; then
-            echo "成功添加DOS攻击防护规则。" | tee -a "$log_file"
+            echo "成功添加DOS攻击防护规则（仅WAN）。" | tee -a "$log_file"
             rules_added=$((rules_added + 1))
         else
             echo "警告：部分DOS攻击规则添加失败。" | tee -a "$log_file"
@@ -708,34 +739,34 @@ setup_firewall_rules() {
         echo "DOS攻击规则已存在。" | tee -a "$log_file"
     fi
 
-    # 防止SYN-Flood攻击的规则（调整连接限制从20改为50）
-    if ! $IPTABLES_PATH -C INPUT -p tcp --syn -m connlimit --connlimit-above 50 --connlimit-mask 32 -j DROP >/dev/null 2>&1; then
-        if $IPTABLES_PATH -A INPUT -p tcp --syn -m connlimit --connlimit-above 50 --connlimit-mask 32 -j DROP 2>&1; then
-            echo "成功添加SYN-Flood攻击防护规则。" | tee -a "$log_file"
+    # 防止SYN-Flood攻击的规则（仅限WAN口，使用变量$conn_limit）
+    if ! $IPTABLES_PATH -C INPUT -i "$wan_name" -p tcp --syn -m connlimit --connlimit-above $conn_limit --connlimit-mask 32 -j DROP >/dev/null 2>&1; then
+        if $IPTABLES_PATH -A INPUT -i "$wan_name" -p tcp --syn -m connlimit --connlimit-above $conn_limit --connlimit-mask 32 -j DROP 2>&1; then
+            echo "成功添加SYN-Flood攻击防护规则（仅WAN，限制：$conn_limit）。" | tee -a "$log_file"
             rules_added=$((rules_added + 1))
         else
             echo "错误：添加SYN-Flood攻击规则失败。" | tee -a "$log_file"
             rules_failed=$((rules_failed + 1))
         fi
     else
-        echo "SYN-Flood攻击的规则已存在。" | tee -a "$log_file"
+        echo "SYN-Flood攻击的规则已存在（限制：$conn_limit）。" | tee -a "$log_file"
     fi
 
-    # 防止伪装攻击（关键修改：移除内网段阻止，只阻止真正的恶意IP段）
-    if ! $IPTABLES_PATH -C INPUT -s 224.0.0.0/3 -j DROP >/dev/null 2>&1; then
+    # 防止伪装攻击（仅限WAN口，且不阻止内网段）
+    if ! $IPTABLES_PATH -C INPUT -i "$wan_name" -s 224.0.0.0/3 -j DROP >/dev/null 2>&1; then
         local spoof_rules_ok=1
         # 只阻止明显的恶意IP段，不阻止内网段
-        $IPTABLES_PATH -A INPUT -s 224.0.0.0/3 -j DROP 2>&1 || spoof_rules_ok=0
-        $IPTABLES_PATH -A INPUT -s 169.254.0.0/16 -j DROP 2>&1 || spoof_rules_ok=0
-        $IPTABLES_PATH -A INPUT -s 192.0.2.0/24 -j DROP 2>&1 || spoof_rules_ok=0
-        $IPTABLES_PATH -A INPUT -s 0.0.0.0/8 -j DROP 2>&1 || spoof_rules_ok=0
-        $IPTABLES_PATH -A INPUT -s 240.0.0.0/5 -j DROP 2>&1 || spoof_rules_ok=0
-        $IPTABLES_PATH -A INPUT -s 127.0.0.0/8 ! -i lo -j DROP 2>&1 || spoof_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -s 224.0.0.0/3 -j DROP 2>&1 || spoof_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -s 169.254.0.0/16 -j DROP 2>&1 || spoof_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -s 192.0.2.0/24 -j DROP 2>&1 || spoof_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -s 0.0.0.0/8 -j DROP 2>&1 || spoof_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -s 240.0.0.0/5 -j DROP 2>&1 || spoof_rules_ok=0
+        $IPTABLES_PATH -A INPUT -i "$wan_name" -s 127.0.0.0/8 ! -i lo -j DROP 2>&1 || spoof_rules_ok=0
         # 已移除对内网段的阻止：10.0.0.0/8, 172.16.0.0/12
         # 注意：192.168.0.0/16 在原脚本中本来就没有被阻止
         
         if [ $spoof_rules_ok -eq 1 ]; then
-            echo "成功添加伪装攻击防护规则（已排除内网段）。" | tee -a "$log_file"
+            echo "成功添加伪装攻击防护规则（仅WAN，已排除内网段）。" | tee -a "$log_file"
             rules_added=$((rules_added + 1))
         else
             echo "警告：部分伪装攻击规则添加失败。" | tee -a "$log_file"
@@ -745,11 +776,11 @@ setup_firewall_rules() {
         echo "伪装攻击规则已存在。" | tee -a "$log_file"
     fi
 
-    # 日志记录和丢弃非法数据包
-    if ! $IPTABLES_PATH -C INPUT -m state --state INVALID -j LOG --log-prefix "INVALID DROP: " >/dev/null 2>&1; then
-        if $IPTABLES_PATH -A INPUT -m state --state INVALID -j LOG --log-prefix "INVALID DROP: " 2>&1 && \
-           $IPTABLES_PATH -A INPUT -m state --state INVALID -j DROP 2>&1; then
-            echo "成功添加非法数据包处理规则。" | tee -a "$log_file"
+    # 日志记录和丢弃非法数据包（仅限WAN口）
+    if ! $IPTABLES_PATH -C INPUT -i "$wan_name" -m state --state INVALID -j LOG --log-prefix "INVALID DROP: " >/dev/null 2>&1; then
+        if $IPTABLES_PATH -A INPUT -i "$wan_name" -m state --state INVALID -j LOG --log-prefix "INVALID DROP: " 2>&1 && \
+           $IPTABLES_PATH -A INPUT -i "$wan_name" -m state --state INVALID -j DROP 2>&1; then
+            echo "成功添加非法数据包处理规则（仅WAN）。" | tee -a "$log_file"
             rules_added=$((rules_added + 1))
         else
             echo "错误：添加非法数据包处理规则失败。" | tee -a "$log_file"
@@ -760,6 +791,7 @@ setup_firewall_rules() {
     fi
 
     echo "防火墙规则设置完成！新增规则：$rules_added，失败：$rules_failed" | tee -a "$log_file"
+    echo "所有防护规则仅应用于WAN接口($wan_name)，内网通信不受影响" | tee -a "$log_file"
 }
 
 # 根据传入的参数执行相应的操作
@@ -883,6 +915,7 @@ echo "网络接口名称：$wan_name" | tee -a "$log_file"
 echo "监控端口：$trap_ports" | tee -a "$log_file"
 echo "IPv6支持：$trap6" | tee -a "$log_file"
 echo "IP超时设置：$unlock 秒" | tee -a "$log_file"
+echo "单IP连接限制：$conn_limit" | tee -a "$log_file"
 echo "========================================" | tee -a "$log_file"
 
 # 检查必需命令
