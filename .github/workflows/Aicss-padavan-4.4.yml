@@ -18,7 +18,7 @@ jobs:
       # Step 3: 设置 Go 环境
       - uses: actions/setup-go@main
         with:
-          go-version: '1.23.0'  # 指定 Go 的版本为 1.23.0
+          go-version: '1.23.5'  # 指定 Go 的版本为 1.23.5（修改：从 1.23.0 升级到 1.23.5 以匹配 xray 构建要求）
           check-latest: true  # 确保使用最新的 Go 次版本
           cache: false  # 禁用缓存以避免不一致的问题
       # Step 4: 准备构建环境
