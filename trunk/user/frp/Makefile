@@ -1,6 +1,6 @@
 THISDIR := $(shell pwd)
 
-all: extra_test
+all: extra_test compress
 	@echo "frp build done!"
 
 extra_test:
@@ -9,7 +9,24 @@ extra_test:
 		exit 1; \
 	fi )
 
+# 可选的 UPX 压缩步骤
+compress: extra_test
+	@if command -v upx >/dev/null 2>&1; then \
+		echo "Compressing frpc with UPX..."; \
+		if [ ! -f frpc.original ]; then \
+			cp frpc frpc.original; \
+		fi; \
+		upx --best --lzma frpc || upx -9 frpc || echo "UPX compression failed, using original binary"; \
+		echo "UPX compression done"; \
+	else \
+		echo "UPX not found, skipping compression"; \
+	fi
+
 clean:
+	@if [ -f frpc.original ]; then \
+		mv frpc.original frpc; \
+		echo "Restored original frpc binary"; \
+	fi
 	#rm -rf frpc
 
 romfs:
