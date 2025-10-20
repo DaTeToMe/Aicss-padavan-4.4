@@ -1,30 +1,78 @@
-include $(ROOTDIR)/rules.mk
+THISDIR := $(shell pwd)
+PKG_NAME := v2ray
+PKG_VERSION := 5.16.1
+PKG_ARCH := mips32le
+PKG_SOURCE := v2ray-linux-$(PKG_ARCH).zip
+PKG_SOURCE_URL := https://github.com/v2fly/v2ray-core/releases/download/v$(PKG_VERSION)/$(PKG_SOURCE)
+PKG_BUILD_DIR := $(THISDIR)/build
 
-PKG_NAME:=v2ray
-PKG_VERSION:=5.24.0
+all: download extract build strip compress
+	@echo "v2ray build done!"
+	@echo "Final binary size:"
+	@ls -lh $(PKG_BUILD_DIR)/v2ray_final
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/v2fly/v2ray-core/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=1b434135924f324dc3f6cf415b9109596a7b356ffcb7948b4e206b50a5e41a88
+download:
+	@if [ ! -f $(PKG_SOURCE) ]; then \
+		echo "Downloading v2ray v$(PKG_VERSION)..."; \
+		wget --no-check-certificate -O $(PKG_SOURCE) $(PKG_SOURCE_URL) || \
+		{ echo "Download failed"; exit 1; }; \
+	else \
+		echo "Archive exists, skipping download"; \
+	fi
 
-PKG_BUILD_DIR:=$(BUILD_DIR)/v2ray-core-$(PKG_VERSION)
+extract: download
+	@echo "Extracting..."
+	@mkdir -p $(PKG_BUILD_DIR)
+	@unzip -oq $(PKG_SOURCE) -d $(PKG_BUILD_DIR)
 
-include $(INCLUDE_DIR)/package.mk
+build: extract
+	@echo "Preparing binary..."
+	@if [ -f $(PKG_BUILD_DIR)/v2ray ]; then \
+		cp $(PKG_BUILD_DIR)/v2ray $(PKG_BUILD_DIR)/v2ray_final; \
+	elif [ -f $(PKG_BUILD_DIR)/*/v2ray ]; then \
+		cp $(PKG_BUILD_DIR)/*/v2ray $(PKG_BUILD_DIR)/v2ray_final; \
+	else \
+		echo "Error: No v2ray binary found in $(PKG_BUILD_DIR)"; \
+		echo "Contents of build directory:"; \
+		ls -la $(PKG_BUILD_DIR)/; \
+		exit 1; \
+	fi
+	@chmod +x $(PKG_BUILD_DIR)/v2ray_final
+	@echo "Original size: $(ls -lh $(PKG_BUILD_DIR)/v2ray_final | awk '{print $5}')"
 
-define Build/Configure
-endef
+strip: build
+	@echo "Checking if binary needs stripping..."
+	@if command -v $(CROSS_COMPILE)strip >/dev/null 2>&1; then \
+		echo "Stripping with $(CROSS_COMPILE)strip..."; \
+		$(CROSS_COMPILE)strip --strip-all $(PKG_BUILD_DIR)/v2ray_final 2>/dev/null || \
+		echo "Strip failed or binary already stripped"; \
+	elif command -v mipsel-linux-strip >/dev/null 2>&1; then \
+		echo "Stripping with mipsel-linux-strip..."; \
+		mipsel-linux-strip --strip-all $(PKG_BUILD_DIR)/v2ray_final 2>/dev/null || \
+		echo "Strip failed or binary already stripped"; \
+	else \
+		echo "Cross-strip tool not found, skipping (binary may already be stripped)"; \
+	fi
+	@echo "After strip: $$(ls -lh $(PKG_BUILD_DIR)/v2ray_final | awk '{print $$5}')"
 
-define Build/Compile
-	(cd $(PKG_BUILD_DIR); \
-		GOOS=linux GOARCH=mipsle CGO_ENABLED=0 \
-		go build -v -o v2ray \
-		-trimpath -ldflags "-s -w -buildid=" \
-		./main; \
-	)
-endef
+compress: build
+	@if command -v upx >/dev/null 2>&1; then \
+		echo "Compressing with UPX..."; \
+		upx --ultra-brute $(PKG_BUILD_DIR)/v2ray_final 2>/dev/null || \
+		upx --best --lzma $(PKG_BUILD_DIR)/v2ray_final 2>/dev/null || \
+		upx --best $(PKG_BUILD_DIR)/v2ray_final 2>/dev/null || \
+		upx -9 $(PKG_BUILD_DIR)/v2ray_final 2>/dev/null || \
+		echo "Note: UPX compression skipped (binary may already be compressed)"; \
+	else \
+		echo "UPX not found. Install: apt-get install upx-ucl"; \
+	fi
+	@echo "Final size: $$(ls -lh $(PKG_BUILD_DIR)/v2ray_final | awk '{print $$5}')"
 
-$(eval $(call BuildPackage,v2ray))
+clean:
+	@rm -rf $(PKG_BUILD_DIR)
+	@rm -f $(PKG_SOURCE)
 
 romfs:
-	$(INSTALL_DIR) $(ROMFSDIR)/usr/bin
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/v2ray $(ROMFSDIR)/usr/bin/v2ray
+	$(ROMFSINST) -p +x $(PKG_BUILD_DIR)/v2ray_final /usr/bin/v2ray
+
+.PHONY: all download extract build strip compress clean romfs
