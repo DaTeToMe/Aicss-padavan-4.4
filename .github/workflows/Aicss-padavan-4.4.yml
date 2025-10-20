@@ -112,9 +112,7 @@ jobs:
       - uses: actions/upload-artifact@main
         with:
           name: ${{ matrix.target }}-${{ matrix.toolchain }}
-          path: |
-            trunk/images/*.trx
-            trunk/images/*.trx.backup.xz
+          path: trunk/images/
       
       - uses: ncipollo/release-action@main
         with:
