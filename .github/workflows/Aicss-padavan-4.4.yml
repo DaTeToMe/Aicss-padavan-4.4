@@ -53,66 +53,25 @@ jobs:
           chmod 755 trunk/user/scripts/files/usr/bin/traffic.sh
           echo "✅ 脚本权限设置完成"
       
-      - name: Apply size optimizations
-        run: |
-          echo "🔧 应用固件体积优化..."
-          
-          # 针对特定二进制（xray/frpc）优化，而不是全局 LDFLAGS
-          # 这些优化将在各自的 Makefile 中处理
-          
-          # 可以在这里添加其他不影响链接的优化
-          # 例如：精简配置文件、移除不需要的模块等
-          
-          echo "✅ 优化配置完成"
-      
       - name: Start build firmware
         run: |
           echo "🔨 开始编译 ${{ matrix.target }}..."
-          echo "📊 编译前磁盘空间："
-          df -h
           
-          if ! make -j$(nproc) ${{ matrix.target }} TOOLCHAIN=${{ matrix.toolchain }} > build.log 2>&1; then
+          if ! make -j$(nproc) ${{ matrix.target }} TOOLCHAIN=${{ matrix.toolchain }} > /dev/null 2>&1; then
             echo "❌ 编译失败！显示错误信息："
-            tail -n 100 build.log
+            make ${{ matrix.target }} TOOLCHAIN=${{ matrix.toolchain }}
             exit 1
           fi
           
           echo "✅ 编译成功完成！"
           
-          # 显示固件详细信息
           echo "📊 固件信息："
           ls -lh trunk/images/*.trx
-          
-          # 显示固件分区大小（如果可用）
-          if command -v binwalk &> /dev/null; then
-            echo "📦 固件结构分析："
-            binwalk trunk/images/*.trx | head -20
-          fi
-          
-          # 计算压缩比
-          ORIGINAL_SIZE=$(stat -c%s trunk/images/*.trx 2>/dev/null || echo "unknown")
-          echo "固件大小: $ORIGINAL_SIZE bytes"
-      
-      - name: Compress firmware (optional)
-        run: |
-          echo "🗜️ 尝试进一步压缩固件..."
-          
-          # 备份原始固件
-          cp trunk/images/*.trx trunk/images/*.trx.backup
-          
-          # 使用 xz 压缩（可选，用于存储）
-          if command -v xz &> /dev/null; then
-            xz -9 -k trunk/images/*.trx.backup
-            echo "✅ 创建了 .xz 压缩版本"
-          fi
-          
-          echo "📊 最终文件："
-          ls -lh trunk/images/
       
       - uses: actions/upload-artifact@main
         with:
           name: ${{ matrix.target }}-${{ matrix.toolchain }}
-          path: trunk/images/
+          path: trunk/images/*.trx
       
       - uses: ncipollo/release-action@main
         with:
@@ -121,12 +80,6 @@ jobs:
           artifacts: trunk/images/*.trx
           allowUpdates: true
           omitBodyDuringUpdate: true
-          body: |
-            ## 固件信息
-            - 编译目标: ${{ matrix.target }}
-            - 工具链: ${{ matrix.toolchain }}
-            - 编译时间: ${{ env.Compilation_time }}
-            - 优化级别: 体积优化 (-Os + GC Sections)
       
       - uses: Mattraks/delete-workflow-runs@main
         with:
