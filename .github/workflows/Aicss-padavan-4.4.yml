@@ -24,7 +24,7 @@ jobs:
           check-latest: true  # 确保使用最新的 Go 次版本
           cache: false  # 禁用缓存以避免不一致的问题
       
-      # Step 4: 安装 UPX 压缩工具
+      # Step 4: 安装 UPX 压缩工具（用于压缩 frpc 和 xray 等二进制文件）
       - name: Install UPX
         run: |
           echo "📦 安装 UPX 压缩工具..."
