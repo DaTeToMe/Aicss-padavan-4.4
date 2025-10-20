@@ -3,25 +3,43 @@ include $(ROOTDIR)/rules.mk
 PKG_NAME:=xray
 PKG_VERSION:=1.8.24
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://codeload.github.com/XTLS/Xray-core/tar.gz/v$(PKG_VERSION)?
-PKG_HASH:=86e3e388c77cda4d8457a607356416c201c1f18bbed53f0a9e76a228508ff298
+# 预编译二进制文件名（根据你的架构选择）
+# mipsle = 小端 MIPS (大多数路由器)
+# mips = 大端 MIPS
+PKG_ARCH:=linux-mipsle
 
-PKG_BUILD_DIR:=$(BUILD_DIR)/Xray-core-$(PKG_VERSION)
+PKG_SOURCE:=Xray-$(PKG_ARCH).zip
+PKG_SOURCE_URL:=https://github.com/XTLS/Xray-core/releases/download/v$(PKG_VERSION)/
+PKG_HASH:=skip
+
+PKG_BUILD_DIR:=$(BUILD_DIR)/xray-$(PKG_VERSION)
 
 include $(INCLUDE_DIR)/package.mk
+
+define Download/xray
+	FILE:=$(PKG_SOURCE)
+	URL:=$(PKG_SOURCE_URL)
+	HASH:=skip
+endef
+
+define Build/Prepare
+	mkdir -p $(PKG_BUILD_DIR)
+	unzip -o $(DL_DIR)/$(PKG_SOURCE) -d $(PKG_BUILD_DIR)
+	chmod +x $(PKG_BUILD_DIR)/xray
+endef
 
 define Build/Configure
 endef
 
 define Build/Compile
-	(cd $(PKG_BUILD_DIR); \
-		sed -i "s/go 1.21.4/go 1.23.5/g" ./go.mod; \
-		GOOS=linux GOARCH=mipsle CGO_ENABLED=0 \
-		go build -v -o xray \
-		-trimpath -ldflags "-s -w -buildid=" \
-		./main; \
-	)
+	@echo "Using prebuilt Xray binary"
+	# 可选：使用 UPX 进一步压缩（如果编译环境有 UPX）
+	@if command -v upx >/dev/null 2>&1; then \
+		echo "Compressing with UPX..."; \
+		upx --best --lzma $(PKG_BUILD_DIR)/xray || upx -9 $(PKG_BUILD_DIR)/xray || true; \
+	else \
+		echo "UPX not found, skipping compression"; \
+	fi
 endef
 
 $(eval $(call BuildPackage,xray))
