@@ -39,12 +39,11 @@ jobs:
           echo "ROOTDIR=${{ github.workspace }}/trunk" >> $GITHUB_ENV
           echo "Compilation_time=$(TZ='Asia/Shanghai' date +%Y%m%d)" >> $GITHUB_ENV
           
-          # 更激进的体积优化选项
+          # 更激进的体积优化选项（只添加编译选项，不添加链接选项）
           echo "CFLAGS=-Os -ffunction-sections -fdata-sections -fno-unwind-tables -fomit-frame-pointer -fno-asynchronous-unwind-tables -fmerge-all-constants" >> $GITHUB_ENV
           echo "CXXFLAGS=-Os -ffunction-sections -fdata-sections -fno-unwind-tables -fomit-frame-pointer -fno-asynchronous-unwind-tables -fmerge-all-constants" >> $GITHUB_ENV
           
-          # 针对 userspace 应用添加链接时垃圾回收（避免内核编译问题）
-          echo "USERSPACE_LDFLAGS=-Wl,--gc-sections -Wl,--as-needed -Wl,-s" >> $GITHUB_ENV
+          # 注意：不在这里设置全局 LDFLAGS，避免破坏依赖库的链接
       
       - name: Set script permissions
         run: |
@@ -58,18 +57,11 @@ jobs:
         run: |
           echo "🔧 应用固件体积优化..."
           
-          # 1. 优化内核配置（如果有 .config 文件）
-          if [ -f trunk/configs/boards/${{ matrix.target }}/kernel-*.config ]; then
-            echo "优化内核配置..."
-            # 这里可以添加内核配置优化
-          fi
+          # 针对特定二进制（xray/frpc）优化，而不是全局 LDFLAGS
+          # 这些优化将在各自的 Makefile 中处理
           
-          # 2. 设置 userspace 编译优化
-          if [ -f trunk/user/Makefile ]; then
-            # 将 LDFLAGS 注入到 user Makefile
-            sed -i '/^export LDFLAGS/d' trunk/user/Makefile
-            echo "export LDFLAGS := \$(USERSPACE_LDFLAGS)" >> trunk/user/Makefile
-          fi
+          # 可以在这里添加其他不影响链接的优化
+          # 例如：精简配置文件、移除不需要的模块等
           
           echo "✅ 优化配置完成"
       
