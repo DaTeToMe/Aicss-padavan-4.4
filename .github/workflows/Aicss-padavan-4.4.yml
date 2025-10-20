@@ -11,22 +11,35 @@ jobs:
     steps:
       # Step 1: 检出代码仓库的内容
       - uses: actions/checkout@main  # 使用官方的 GitHub Actions 检出代码仓库
+      
       # Step 2: 配置 ccache 以加速编译过程
       - uses: hendrikmuhs/ccache-action@main
         with:
           key: ${{ matrix.target }}-${{ matrix.toolchain }}  # ccache 的缓存键与目标设备和工具链绑定
+      
       # Step 3: 设置 Go 环境
       - uses: actions/setup-go@main
         with:
-          go-version: '1.23.5'  # 指定 Go 的版本为 1.23.5（修改：从 1.23.0 升级到 1.23.5 以匹配 xray 构建要求）
+          go-version: '1.23.5'  # 指定 Go 的版本为 1.23.5
           check-latest: true  # 确保使用最新的 Go 次版本
           cache: false  # 禁用缓存以避免不一致的问题
-      # Step 4: 准备构建环境
-      - name: Prepare environment  # 设置构建环境的名称
+      
+      # Step 4: 安装 UPX 压缩工具
+      - name: Install UPX
+        run: |
+          echo "📦 安装 UPX 压缩工具..."
+          wget -q https://github.com/upx/upx/releases/download/v4.2.1/upx-4.2.1-amd64_linux.tar.xz
+          tar -xf upx-4.2.1-amd64_linux.tar.xz
+          sudo cp upx-4.2.1-amd64_linux/upx /usr/local/bin/
+          upx --version
+          echo "✅ UPX 安装完成"
+      
+      # Step 5: 准备构建环境
+      - name: Prepare environment
         run: |
           # 更新软件包管理器并安装所需的工具和库
           sudo apt-get update > /dev/null 2>&1
-          sudo apt-get install -y libtool-bin gperf python3-docutils autopoint gettext ccache liblzma-dev libltdl-dev > /dev/null 2>&1
+          sudo apt-get install -y libtool-bin gperf python3-docutils autopoint gettext ccache liblzma-dev libltdl-dev unzip > /dev/null 2>&1
           echo "✅ 依赖安装完成"
           # 将根目录路径保存到环境变量 ROOTDIR
           echo "ROOTDIR=${{ github.workspace }}/trunk" >> $GITHUB_ENV
@@ -35,17 +48,19 @@ jobs:
           # 优化编译选项以减小固件体积
           echo "CFLAGS=-Os -ffunction-sections -fdata-sections -fno-unwind-tables -fomit-frame-pointer" >> $GITHUB_ENV
           echo "CXXFLAGS=-Os -ffunction-sections -fdata-sections -fno-unwind-tables -fomit-frame-pointer" >> $GITHUB_ENV
-          echo "LDFLAGS=" >> $GITHUB_ENV
-      # Step 5: 设置脚本文件的权限
-      - name: Set script permissions  # 设置脚本权限的步骤名称
+          echo "LDFLAGS=-Wl,--gc-sections" >> $GITHUB_ENV
+      
+      # Step 6: 设置脚本文件的权限
+      - name: Set script permissions
         run: |
           chmod 755 trunk/user/scripts/files/usr/bin/cloudflare_ddns.sh  # 设置 Cloudflare DDNS 脚本权限
           chmod 755 trunk/user/scripts/files/usr/bin/flytrap.sh  # 设置蜜罐脚本权限
           chmod 755 trunk/user/scripts/files/usr/bin/rps-rfs-ops.sh  # 设置优化操作脚本权限
           chmod 755 trunk/user/scripts/files/usr/bin/traffic.sh  # 设置流量脚本操作脚本权限
-          echo "✅ 脚本权限设置完成"  # 输出确认信息
-      # Step 6: 开始构建固件
-      - name: Start build firmware  # 构建固件步骤名称
+          echo "✅ 脚本权限设置完成"
+      
+      # Step 7: 开始构建固件
+      - name: Start build firmware
         run: |
           echo "🔨 开始编译 ${{ matrix.target }}..."
           
@@ -57,12 +72,18 @@ jobs:
           fi
           
           echo "✅ 编译成功完成！"
-      # Step 7: 上传编译生成的固件文件
+          
+          # 显示固件大小
+          echo "📊 固件信息："
+          ls -lh trunk/images/*.trx
+      
+      # Step 8: 上传编译生成的固件文件
       - uses: actions/upload-artifact@main
         with:
           name: ${{ matrix.target }}-${{ matrix.toolchain }}  # 设置上传的文件名
           path: trunk/images/*.trx  # 指定上传的固件文件路径
-      # Step 8: 创建或更新版本发布
+      
+      # Step 9: 创建或更新版本发布
       - uses: ncipollo/release-action@main
         with:
           commit: ${{ github.sha }}  # 使用当前工作流运行的提交哈希值
@@ -70,7 +91,8 @@ jobs:
           artifacts: trunk/images/*.trx  # 上传的固件文件
           allowUpdates: true  # 允许更新已有标签的发布
           omitBodyDuringUpdate: true  # 更新发布时省略正文内容
-      # Step 9: 删除旧的工作流运行记录
+      
+      # Step 10: 删除旧的工作流运行记录
       - uses: Mattraks/delete-workflow-runs@main
         with:
           retain_days: 0  # 删除所有超过 0 天的运行记录
