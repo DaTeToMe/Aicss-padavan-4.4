@@ -53,9 +53,9 @@ struct nvram_pair router_defaults[] = {
 	{ "wan_netmask", "0.0.0.0" },	/* WAN netmask */
 	{ "wan_gateway", "0.0.0.0" },	/* WAN gateway */
 	{ "wan_dnsenable_x", "0" },
-	{ "wan_dns1_x", "119.29.29.29" },
-	{ "wan_dns2_x", "223.6.6.6" },
-	{ "wan_dns3_x", "8.8.8.8" },
+	{ "wan_dns1_x", "" },
+	{ "wan_dns2_x", "" },
+	{ "wan_dns3_x", "" },
 	{ "wan_hostname", "" },			/* WAN hostname */
 	{ "wan_vci", "" },				/* WAN vendor class identifier (OPT-60) */
 	{ "wan_ttl_fix", "0" },
@@ -137,7 +137,7 @@ struct nvram_pair router_defaults[] = {
 	{ "http_lanport", "80" },		/* HTTP LAN port to listen on */
 	{ "https_lport", "443" },		/* HTTPS LAN port to listen on */
 	{ "https_clist", DEF_HTTPS_CIPH_LIST },	/* HTTPS SSL cipher list */
-	{ "fw_dos_x", "1" },			/* DoS Attacks Protection */
+	{ "fw_dos_x", "0" },			/* DoS Attacks Protection */
 	{ "dr_enable_x", "1" },			/* Use DHCP Routes */
 	{ "mr_enable_x", "0" },			/* Multicast Routing to LAN */
 	{ "mr_qleave_x", "1" },
@@ -434,9 +434,9 @@ struct nvram_pair router_defaults[] = {
 	{ "ip6_wan_gate", "" },
 
 	{ "ip6_dns_auto", "0" },
-	{ "ip6_dns1", "2402:4e00::" },
-	{ "ip6_dns2", "2400:3200::1" },
-	{ "ip6_dns3", "2400:da00::6666" },
+	{ "ip6_dns1", "" },
+	{ "ip6_dns2", "" },
+	{ "ip6_dns3", "" },
 
 	{ "ip6_lan_auto", "1" },
 	{ "ip6_lan_addr", "fc00:101:101::1" },
@@ -567,7 +567,7 @@ struct nvram_pair router_defaults[] = {
 	{ "global_server", "nil" }, 	//nil 停用
 	{ "udp_relay_server", "nil" }, 	//nil 停用 same 与主服务相同
 	{ "ss_threads", "1" },
-	{ "ss_run_mode", "gfw" }, 	 	//gfw router all oversea
+	{ "ss_run_mode", "router" }, 	 	//gfw router all oversea
 	{ "s_dports", "1" },
 	{ "lan_con", "0" },
 	{ "pdnsd_enable", "1" },
@@ -1044,7 +1044,7 @@ struct nvram_pair router_defaults[] = {
 #if defined(USE_SFE)
 	{ "sfe_enable", "0" },		/* Software Offload Routing IPv4/IPv6 */
 #endif
-	{ "fw_syn_cook", "1" },		/* Prevent SYN Flood Attack */
+	{ "fw_syn_cook", "0" },		/* Prevent SYN Flood Attack */
 	{ "fw_mac_drop", "0" },
 	{ "nf_nat_type", "1" },
 	{ "nf_nat_loop", "1" },
