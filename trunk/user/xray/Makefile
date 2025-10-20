@@ -6,7 +6,7 @@ PKG_SOURCE := Xray-linux-$(PKG_ARCH).zip
 PKG_SOURCE_URL := https://github.com/XTLS/Xray-core/releases/download/v$(PKG_VERSION)/$(PKG_SOURCE)
 PKG_BUILD_DIR := $(THISDIR)/build
 
-all: download extract build strip compress
+all: download extract build compress
 	@echo "xray build done!"
 	@echo "Final binary size:"
 	@ls -lh $(PKG_BUILD_DIR)/xray_final
@@ -38,28 +38,32 @@ build: extract
 	@echo "Original size: $$(ls -lh $(PKG_BUILD_DIR)/xray_final | awk '{print $$5}')"
 
 strip: build
-	@if command -v mips-linux-gnu-strip >/dev/null 2>&1; then \
-		echo "Stripping with mips-linux-gnu-strip..."; \
-		mips-linux-gnu-strip --strip-all $(PKG_BUILD_DIR)/xray_final; \
-	elif command -v strip >/dev/null 2>&1; then \
-		echo "Stripping with strip..."; \
-		strip --strip-all $(PKG_BUILD_DIR)/xray_final 2>/dev/null || strip $(PKG_BUILD_DIR)/xray_final; \
+	@echo "Checking if binary needs stripping..."
+	@if command -v $(CROSS_COMPILE)strip >/dev/null 2>&1; then \
+		echo "Stripping with $(CROSS_COMPILE)strip..."; \
+		$(CROSS_COMPILE)strip --strip-all $(PKG_BUILD_DIR)/xray_final 2>/dev/null || \
+		echo "Strip failed or binary already stripped"; \
+	elif command -v mipsel-linux-strip >/dev/null 2>&1; then \
+		echo "Stripping with mipsel-linux-strip..."; \
+		mipsel-linux-strip --strip-all $(PKG_BUILD_DIR)/xray_final 2>/dev/null || \
+		echo "Strip failed or binary already stripped"; \
 	else \
-		echo "Warning: strip not found, skipping"; \
+		echo "Cross-strip tool not found, skipping (binary may already be stripped)"; \
 	fi
-	@echo "After strip: $$(ls -lh $(PKG_BUILD_DIR)/xray_final | awk '{print $$5}')"
+	@echo "After strip: $(ls -lh $(PKG_BUILD_DIR)/xray_final | awk '{print $5}')"
 
-compress: strip
+compress: build
 	@if command -v upx >/dev/null 2>&1; then \
 		echo "Compressing with UPX..."; \
 		upx --ultra-brute $(PKG_BUILD_DIR)/xray_final 2>/dev/null || \
 		upx --best --lzma $(PKG_BUILD_DIR)/xray_final 2>/dev/null || \
+		upx --best $(PKG_BUILD_DIR)/xray_final 2>/dev/null || \
 		upx -9 $(PKG_BUILD_DIR)/xray_final 2>/dev/null || \
-		echo "Warning: UPX compression failed"; \
+		echo "Note: UPX compression skipped (binary may already be compressed)"; \
 	else \
-		echo "UPX not found, install with: apt-get install upx-ucl"; \
+		echo "UPX not found. Install: apt-get install upx-ucl"; \
 	fi
-	@echo "Final size: $$(ls -lh $(PKG_BUILD_DIR)/xray_final | awk '{print $$5}')"
+	@echo "Final size: $(ls -lh $(PKG_BUILD_DIR)/xray_final | awk '{print $5}')"
 
 clean:
 	@rm -rf $(PKG_BUILD_DIR)
@@ -68,4 +72,4 @@ clean:
 romfs:
 	$(ROMFSINST) -p +x $(PKG_BUILD_DIR)/xray_final /usr/bin/xray
 
-.PHONY: all download extract build strip compress clean romfs
+.PHONY: all download extract build compress clean romfs
