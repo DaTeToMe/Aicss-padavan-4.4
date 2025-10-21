@@ -2,17 +2,19 @@
 
 配置带以下主要插件（针对性的对各项插件脚本进行了调整和适配）：
 
-1、科学上网 （支持 Shadowsocks、ShadowsocksR 、Vmess、Vless、Trojan，支持 v2ray-plugin）
+1、科学上网 （支持 Shadowsocks、ShadowsocksR，支持 v2ray-plugin）
 
 2、Frpc 内网穿透 （客户端版本 V41）
 
 3、包含 msd_lite，用于IPTV组播转单播
 
-4、包含 FTP 服务器，用于文件传输
+4、包含 FTP 、SMB 服务器，用于文件传输
 
 5、包含 USB 打印机服务
 
-6、自己写的的蜜罐防火墙脚本、设备流量统计脚本、Cloudflare Ddns 更新IP解析脚本，并在后台做了网页支持，其它固件作者使用请加说明出处，谢谢
+6、包含 Aria2 下载管理器、AdbybyPlus 广告过滤
+
+7、自己写的的蜜罐防火墙脚本、设备流量统计脚本、Cloudflare Ddns 更新IP解析脚本，并在后台做了网页支持，其它固件作者使用请加说明出处，谢谢
 
 
 默认管理地址 192.168.168.1
