@@ -1,20 +1,18 @@
 THISDIR = $(shell pwd)
+
 SRC_SS_NAME=shadowsocks-libev-3.3.5
+#https://github.com/shadowsocks/shadowsocks-libev.git
+
 SRC_SSR_NAME=shadowsocksr-libev-master
 ARCHIVE_SSR_NAME=shadowsocksr-libev-master-e2373d7
+#https://github.com/shadowsocksr-backup/shadowsocksr-libev.git
 
-# 如果启用了 Xray 或 V2Ray，跳过 SS/SSR 二进制编译
-ifneq ($(CONFIG_FIRMWARE_INCLUDE_XRAY)$(CONFIG_FIRMWARE_INCLUDE_V2RAY),)
-all:
-	@echo "Xray/V2Ray enabled, skipping SS/SSR binary compilation"
-else
+
 all: extract_test config_test
 ifeq ($(CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS),y)
 	$(MAKE) -j$(HOST_NCPU) -C $(SRC_SSR_NAME)
 endif
 	$(MAKE) -j$(HOST_NCPU) -C $(SRC_SS_NAME)
-endif
-
 ifeq ($(CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS),y)
 extract_test: extract_ssr_test extract_ss_test
 else
@@ -108,22 +106,13 @@ ifeq ($(CONFIG_FIRMWARE_INCLUDE_SHADOWSOCKS),y)
 	$(ROMFSINST) /etc_ro/ss_wan_ip.sh
 	$(ROMFSINST) /etc_ro/ss_dlink.sh
 	$(ROMFSINST) $(THISDIR)/ss/ /etc_ro/ss/
-# 只有在未启用 Xray/V2Ray 时才安装 SS/SSR 二进制
-ifneq ($(CONFIG_FIRMWARE_INCLUDE_XRAY)$(CONFIG_FIRMWARE_INCLUDE_V2RAY),)
-	@echo "Xray/V2Ray enabled, skipping SS/SSR binary installation"
-else
 	$(ROMFSINST) -p +x $(THISDIR)/$(SRC_SSR_NAME)/src/ss-redir /usr/bin/ssr-redir
 	$(ROMFSINST) -p +x $(THISDIR)/$(SRC_SSR_NAME)/src/ss-local /usr/bin/ssr-local
 	$(ROMFSINST) -p +x $(THISDIR)/$(SRC_SS_NAME)/src/ss-redir /usr/bin/ss-redir
 	$(ROMFSINST) -p +x $(THISDIR)/$(SRC_SS_NAME)/src/ss-local /usr/bin/ss-local
 endif
-endif
 ifeq ($(CONFIG_FIRMWARE_INCLUDE_SSSERVER),y)
-ifneq ($(CONFIG_FIRMWARE_INCLUDE_XRAY)$(CONFIG_FIRMWARE_INCLUDE_V2RAY),)
-	@echo "Xray/V2Ray enabled, skipping ss-server installation"
-else
 	$(ROMFSINST) -p +x $(THISDIR)/$(SRC_SS_NAME)/src/ss-server /usr/bin/ss-server
-endif
 endif
 ifeq ($(CONFIG_FIRMWARE_INCLUDE_SSV2RP),y)
 	$(ROMFSINST) -p +x $(THISDIR)/v2ray-plugin /usr/bin/v2ray-plugin
