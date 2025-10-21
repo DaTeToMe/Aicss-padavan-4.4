@@ -41,7 +41,7 @@ struct nvram_pair router_defaults[] = {
 	{ "lan_dns1", "" },				/* LAN DNS1 */
 	{ "lan_dns2", "" },				/* LAN DNS2 */
 	{ "lan_domain", "lan" },		/* LAN domain name */
-	{ "lan_stp", "1" },				/* LAN spanning tree protocol */
+	{ "lan_stp", "0" },				/* LAN spanning tree protocol */
 
 	/* WAN H/W parameters */
 	{ "wan_ifname", IFNAME_WAN },	/* WAN interface name */
@@ -567,7 +567,7 @@ struct nvram_pair router_defaults[] = {
 	{ "global_server", "nil" }, 	//nil 停用
 	{ "udp_relay_server", "nil" }, 	//nil 停用 same 与主服务相同
 	{ "ss_threads", "1" },
-	{ "ss_run_mode", "router" }, 	 	//gfw router all oversea
+	{ "ss_run_mode", "gfw" }, 	 	//gfw router all oversea
 	{ "s_dports", "1" },
 	{ "lan_con", "0" },
 	{ "pdnsd_enable", "1" },
