@@ -1608,7 +1608,7 @@ function import_ssr_url(btn, urlname, sid) {
 										<div class="row-fluid">
 											<div id="tabMenu" class="submenuBlock"></div>
 											<div id="wnd_ss_cfg">
-												<div class="alert alert-info" style="margin: 10px;">一个兼容Shadowsocks、ShadowsocksR 、Vmess、Vless、Trojan协议的上网工具。
+												<div class="alert alert-info" style="margin: 10px;">一个兼容Shadowsocks、ShadowsocksR协议的上网工具。
 													<div><span style="color:#E53333;">若被编辑的节点正在运行使用，请完成后点击“应用设置”更新节点信息并"重连"</span></div>
 													<div><span style="color:#E53333;">运行状态不会实时更新，启动程序后需等待一段时间后点击"刷新"获取运行状态</span></div>
 												</div>
