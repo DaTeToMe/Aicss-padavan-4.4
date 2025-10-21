@@ -62,6 +62,8 @@ configure:
 		ZLIB_LIBS="-L$(STAGEDIR)/lib -lz" \
 		OPENSSL_CFLAGS="-I$(STAGEDIR)/include" \
 		OPENSSL_LIBS="-L$(STAGEDIR)/lib -lssl -lcrypto" \
+		LIBXML2_CFLAGS="-I$(STAGEDIR)/include/libxml2" \
+		LIBXML2_LIBS="-L$(STAGEDIR)/lib -lxml2" \
 		--host=$(HOST_TARGET) \
 		--build=$(HOST_BUILD) ; \
 	)
@@ -79,4 +81,3 @@ ifeq ($(CONFIG_FIRMWARE_INCLUDE_ARIA_WEB_CONTROL),y)
 endif
 	$(ROMFSINST) $(THISDIR)/$(SRC_NAME)/src/aria2c /usr/bin/aria2c
 	$(ROMFSINST) -p +x /usr/bin/aria.sh
-
