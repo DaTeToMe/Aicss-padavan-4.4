@@ -6,7 +6,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: [JCG-AC860M]
+        target: [JDCLOUD-RE-SP-01B]
         toolchain: [mipsel-linux-musl]
     steps:
       - uses: actions/checkout@main
